@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get latest apk-tools version and download binaries
+        run: |
+          APK_VERSION=$(gh release view --repo vellum-dev/apk-tools --json tagName -q .tagName)
+          echo "APK_VERSION=$APK_VERSION" >> $GITHUB_ENV
+          wget -q "https://github.com/vellum-dev/apk-tools/releases/download/$APK_VERSION/apk-aarch64"
+          wget -q "https://github.com/vellum-dev/apk-tools/releases/download/$APK_VERSION/apk-armv7"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # TODO: fetch from private repo or host publicly
+      # - name: Download signing key
+      #   run: |
+      #     gh api repos/vellum-dev/vellum/contents/keys/packages.rsa.pub --jq '.content' | base64 -d > packages.rsa.pub
+      #   env:
+      #     GH_TOKEN: ${{ github.token }}
+
+      # Signing key is bundled in repo for now (packages.rsa.pub)
+
+      - name: Generate SHAs and update bootstrap.sh
+        run: |
+          VELLUM_SHA=$(sha256sum vellum | cut -d' ' -f1)
+          APK_AARCH64_SHA=$(sha256sum apk-aarch64 | cut -d' ' -f1)
+          APK_ARMV7_SHA=$(sha256sum apk-armv7 | cut -d' ' -f1)
+          KEY_SHA=$(sha256sum packages.rsa.pub | cut -d' ' -f1)
+
+          sed -i "s/__APK_TOOLS_VERSION__/$APK_VERSION/" bootstrap.sh
+          sed -i "s/__VELLUM_SHA256__/$VELLUM_SHA/" bootstrap.sh
+          sed -i "s/__APK_AARCH64_SHA256__/$APK_AARCH64_SHA/" bootstrap.sh
+          sed -i "s/__APK_ARMV7_SHA256__/$APK_ARMV7_SHA/" bootstrap.sh
+          sed -i "s/__SIGNING_KEY_SHA256__/$KEY_SHA/" bootstrap.sh
+
+      - name: Generate bootstrap SHA and update README
+        run: |
+          BOOTSTRAP_SHA=$(sha256sum bootstrap.sh | cut -d' ' -f1)
+          sed -i "s|echo \".*  bootstrap.sh\"|echo \"$BOOTSTRAP_SHA  bootstrap.sh\"|" README.md
+
+      - name: Commit README update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --staged --quiet || git commit -m "docs: update bootstrap SHA for ${{ github.ref_name }}"
+          git push origin HEAD:main
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            vellum
+            bootstrap.sh
+          generate_release_notes: true
