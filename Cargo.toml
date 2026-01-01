@@ -1,0 +1,23 @@
+[package]
+name = "vellum"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ureq = { version = "2", default-features = false, features = ["tls"] }
+flate2 = "1"
+tar = "0.4"
+rsa = "0.9"
+sha1 = { version = "0.10", features = ["oid"] }
+sha2 = "0.10"
+pkcs8 = "0.10"
+pkcs1 = "0.7"
+anyhow = "1"
+thiserror = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

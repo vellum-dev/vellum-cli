@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux/arm64
+            triple: aarch64-unknown-linux-musl
+            output: vellum-linux-arm64
+          - platform: linux/arm/v7
+            triple: armv7-unknown-linux-musleabihf
+            output: vellum-linux-armv7
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build binary
+        run: |
+          docker build --platform ${{ matrix.platform }} -t vellum-build .
+          docker create --name extract vellum-build
+          docker cp extract:/src/build/${{ matrix.triple }}/release/vellum ./${{ matrix.output }}
+          docker rm extract
+
+      - name: Compress with UPX
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          files: ./${{ matrix.output }}
+          args: --best
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: ./${{ matrix.output }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd binaries
+          sha256sum vellum-linux-arm64 vellum-linux-armv7 > checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            binaries/vellum-linux-arm64
+            binaries/vellum-linux-armv7
+            binaries/checksums.txt
+
+      - name: Download apk-tools and signing key
+        run: |
+          APK_VERSION=$(gh release view --repo vellum-dev/apk-tools --json tagName -q .tagName)
+          echo "APK_VERSION=$APK_VERSION" >> $GITHUB_ENV
+          wget -q "https://github.com/vellum-dev/apk-tools/releases/download/$APK_VERSION/apk-aarch64"
+          wget -q "https://github.com/vellum-dev/apk-tools/releases/download/$APK_VERSION/apk-armv7"
+          wget -q "https://raw.githubusercontent.com/vellum-dev/vellum/main/keys/packages.rsa.pub"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Generate SHAs and update bootstrap.sh
+        run: |
+          VELLUM_AARCH64_SHA=$(grep vellum-linux-arm64 binaries/checksums.txt | cut -d' ' -f1)
+          VELLUM_ARMV7_SHA=$(grep vellum-linux-armv7 binaries/checksums.txt | cut -d' ' -f1)
+          APK_AARCH64_SHA=$(sha256sum apk-aarch64 | cut -d' ' -f1)
+          APK_ARMV7_SHA=$(sha256sum apk-armv7 | cut -d' ' -f1)
+          KEY_SHA=$(sha256sum packages.rsa.pub | cut -d' ' -f1)
+
+          sed -i "s/__APK_TOOLS_VERSION__/$APK_VERSION/" bootstrap.sh
+          sed -i "s/__VELLUM_AARCH64_SHA256__/$VELLUM_AARCH64_SHA/" bootstrap.sh
+          sed -i "s/__VELLUM_ARMV7_SHA256__/$VELLUM_ARMV7_SHA/" bootstrap.sh
+          sed -i "s/__APK_AARCH64_SHA256__/$APK_AARCH64_SHA/" bootstrap.sh
+          sed -i "s/__APK_ARMV7_SHA256__/$APK_ARMV7_SHA/" bootstrap.sh
+          sed -i "s/__SIGNING_KEY_SHA256__/$KEY_SHA/" bootstrap.sh
+
+      - name: Upload bootstrap.sh to release
+        run: gh release upload ${{ github.ref_name }} bootstrap.sh --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Generate bootstrap SHA and update README
+        run: |
+          BOOTSTRAP_SHA=$(sha256sum bootstrap.sh | cut -d' ' -f1)
+          sed -i "s|echo \".*  bootstrap.sh\"|echo \"$BOOTSTRAP_SHA  bootstrap.sh\"|" README.md
+
+      - name: Commit README update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --staged --quiet || git commit -m "docs: update bootstrap SHA for ${{ github.ref_name }}"
+          git push origin HEAD:main
+        env:
+          GH_TOKEN: ${{ github.token }}
