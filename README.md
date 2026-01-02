@@ -6,7 +6,7 @@ Wrapper and boostrap for the Vellum reMarkable package manager. Wraps Alpine's `
 
 ```sh
 wget https://github.com/vellum-dev/vellum-cli/releases/latest/download/bootstrap.sh
-echo "SHA256_PLACEHOLDER  bootstrap.sh" | sha256sum -c && bash bootstrap.sh
+echo "00fc77169833e3a7f5a8dd66ed8029d47055f7063e3f8aa2e627115665493f43  bootstrap.sh" | sha256sum -c && bash bootstrap.sh
 ```
 
 ## Usage
