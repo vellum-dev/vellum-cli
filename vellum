@@ -125,7 +125,6 @@ pkgdesc = Virtual package for $DESC
 url = https://github.com/vellum-dev/vellum-cli
 arch = noarch
 license = MIT
-provides = $DEVICE
 EOF
 
     mkdir -p "$PKG_DIR/empty"
@@ -182,6 +181,13 @@ ensure_remarkable_os() {
             --force-no-chroot \
             --no-logfile \
             add remarkable-os >/dev/null 2>&1 || true
+
+        if [ -n "$PREV_VER" ]; then
+            echo ""
+            echo "OS updated ($PREV_VER → $CUR_VER)!"
+            echo "   Run 'vellum reenable' to restore system files."
+            echo ""
+        fi
     fi
 }
 
@@ -191,6 +197,25 @@ ensure_device_package
 export APK_CONFIG="$VELLUM_ROOT/etc/apk/config"
 
 case "$1" in
+    --help|-h|"")
+        cat <<EOF
+Vellum package manager for reMarkable
+
+Usage: vellum <command> [options]
+
+Vellum commands:
+  reenable            Restore system files after OS upgrade
+  self uninstall      Remove vellum itself (--all to include packages)
+
+Aliases:
+  install <pkg>       Alias for 'add'
+  remove <pkg>        Alias for 'del'
+  purge <pkg>         Alias for 'del --purge'
+  show <pkg>          Alias for 'info -a'
+
+EOF
+        exec "$VELLUM_ROOT/bin/apk.vellum" --help
+        ;;
     install)
         shift
         set -- add "$@"
@@ -201,11 +226,32 @@ case "$1" in
         ;;
     purge)
         shift
+        export VELLUM_PURGE=1
         set -- del --purge "$@"
         ;;
     show)
         shift
         set -- info -a "$@"
+        ;;
+    reenable)
+        HOOKS_DIR="$VELLUM_ROOT/hooks/post-os-upgrade"
+        if [ ! -d "$HOOKS_DIR" ] || [ -z "$(ls -A "$HOOKS_DIR" 2>/dev/null)" ]; then
+            echo "No packages require re-enabling after OS upgrades."
+            exit 0
+        fi
+        echo "Re-enabling packages after OS upgrade..."
+        "$VELLUM_ROOT/bin/mount-rw"
+        for script in "$HOOKS_DIR"/*; do
+            [ -x "$script" ] || continue
+            pkg=$(basename "$script")
+            echo "  $pkg"
+            if ! "$script"; then
+                echo "    warning: $pkg reenable script failed"
+            fi
+        done
+        "$VELLUM_ROOT/bin/mount-restore"
+        echo "Done."
+        exit 0
         ;;
     self)
         case "$2" in
@@ -222,7 +268,7 @@ case "$1" in
 
                 if [ "$UNINSTALL_YES" = false ]; then
                     printf "This will remove vellum"
-                    [ "$UNINSTALL_ALL" = true ] && printf " and all installed packages"
+                    [ "$UNINSTALL_ALL" = true ] && printf " and permanently delete all installed packages and their data"
                     printf ". Continue? [y/N] "
                     read -r confirm
                     case "$confirm" in
@@ -233,6 +279,7 @@ case "$1" in
 
                 if [ "$UNINSTALL_ALL" = true ]; then
                     echo "Removing all installed packages..."
+                    export VELLUM_PURGE=1
                     "$VELLUM_ROOT/bin/apk.vellum" \
                         --root "$VELLUM_ROOT" \
                         --dest / \
@@ -244,7 +291,7 @@ case "$1" in
                                 --dest / \
                                 --force-no-chroot \
                                 --no-logfile \
-                                del "$pkg" 2>/dev/null || true
+                                del --purge "$pkg" 2>/dev/null || true
                         done
                 fi
                 echo "Removing vellum..."
@@ -260,7 +307,7 @@ case "$1" in
                 ;;
         esac
         ;;
-    del|add)
+    del)
         for arg in "$@"; do
             if [ "$arg" = "vellum" ]; then
                 echo "Error: Cannot add/remove vellum package directly."
@@ -268,6 +315,27 @@ case "$1" in
                 exit 1
             fi
         done
+        ;;
+    add)
+        for arg in "$@"; do
+            if [ "$arg" = "vellum" ]; then
+                echo "Error: Cannot add/remove vellum package directly."
+                echo "Use 'vellum self uninstall' to remove vellum."
+                exit 1
+            fi
+        done
+        "$VELLUM_ROOT/bin/apk.vellum" \
+            --root "$VELLUM_ROOT" \
+            --dest / \
+            --force-no-chroot \
+            --no-logfile \
+            --cache-predownload \
+            "$@"
+        r=$?
+        "$VELLUM_ROOT/bin/apk.vellum" \
+            --root "$VELLUM_ROOT" \
+            cache purge >/dev/null 2>&1
+        exit $r
         ;;
 esac
 

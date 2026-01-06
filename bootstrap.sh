@@ -8,6 +8,19 @@ APK_ARMV7_SHA256="__APK_ARMV7_SHA256__"
 SIGNING_KEY_SHA256="__SIGNING_KEY_SHA256__"
 
 VELLUM_ROOT="/home/root/.vellum"
+
+FRESH_INSTALL=false
+if [ ! -d "$VELLUM_ROOT" ]; then
+    FRESH_INSTALL=true
+fi
+
+cleanup() {
+    if [ "$FRESH_INSTALL" = true ]; then
+        echo "Installation failed, cleaning up..."
+        rm -rf "$VELLUM_ROOT"
+    fi
+}
+trap cleanup EXIT
 VELLUM_CLI_RELEASES="https://github.com/vellum-dev/vellum-cli/releases/latest/download"
 VELLUM_PACKAGES_REPO="https://raw.githubusercontent.com/vellum-dev/vellum/main"
 VELLUM_APK_RELEASES="https://github.com/vellum-dev/apk-tools/releases/download/$APK_TOOLS_VERSION"
@@ -34,7 +47,7 @@ case "$ARCH" in
     *)       echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
-mkdir -p "$VELLUM_ROOT"/{bin,etc/apk/keys,lib/apk/db,share/bash-completion/completions,state,local-repo,cache}
+mkdir -p "$VELLUM_ROOT"/{bin,etc/apk/keys,etc/apk/cache,lib/apk/db,share/bash-completion/completions,state,local-repo}
 
 echo "Downloading apk.vellum..."
 wget -q "$VELLUM_APK_RELEASES/apk-$APK_ARCH" -O "$VELLUM_ROOT/bin/apk.vellum"
@@ -99,6 +112,9 @@ echo "Registering vellum package..."
     --no-logfile \
     add vellum 2>/dev/null || true
 
+echo "Installing mount-utils..."
+"$VELLUM_ROOT/bin/vellum" add mount-utils
+
 echo "Installing bash completion..."
 "$VELLUM_ROOT/bin/vellum" add vellum-bash-completion
 
@@ -114,6 +130,8 @@ else
     echo "$COMPLETION_LINE" >> "$BASHRC"
     echo "Added vellum to PATH and completions in $BASHRC"
 fi
+
+trap - EXIT
 
 echo ""
 echo "Vellum installed successfully!"
