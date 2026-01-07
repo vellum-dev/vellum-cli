@@ -2,7 +2,8 @@
 set -e
 
 APK_TOOLS_VERSION="__APK_TOOLS_VERSION__"
-VELLUM_SHA256="__VELLUM_SHA256__"
+VELLUM_AARCH64_SHA256="__VELLUM_AARCH64_SHA256__"
+VELLUM_ARMV7_SHA256="__VELLUM_ARMV7_SHA256__"
 APK_AARCH64_SHA256="__APK_AARCH64_SHA256__"
 APK_ARMV7_SHA256="__APK_ARMV7_SHA256__"
 SIGNING_KEY_SHA256="__SIGNING_KEY_SHA256__"
@@ -58,8 +59,16 @@ esac
 chmod +x "$VELLUM_ROOT/bin/apk.vellum"
 
 echo "Downloading vellum..."
-wget -q "$VELLUM_CLI_RELEASES/vellum" -O "$VELLUM_ROOT/bin/vellum"
-verify_sha256 "$VELLUM_ROOT/bin/vellum" "$VELLUM_SHA256"
+case "$APK_ARCH" in
+    aarch64)
+        wget -q "$VELLUM_CLI_RELEASES/vellum-linux-arm64" -O "$VELLUM_ROOT/bin/vellum"
+        verify_sha256 "$VELLUM_ROOT/bin/vellum" "$VELLUM_AARCH64_SHA256"
+        ;;
+    armv7)
+        wget -q "$VELLUM_CLI_RELEASES/vellum-linux-armv7" -O "$VELLUM_ROOT/bin/vellum"
+        verify_sha256 "$VELLUM_ROOT/bin/vellum" "$VELLUM_ARMV7_SHA256"
+        ;;
+esac
 chmod +x "$VELLUM_ROOT/bin/vellum"
 
 echo "Downloading signing key..."
