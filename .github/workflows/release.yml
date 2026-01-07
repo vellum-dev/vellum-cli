@@ -20,11 +20,11 @@ jobs:
         with:
           go-version: "1.21"
 
-      - name: Build with goreleaser
+      - name: Build and release with goreleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
-          args: release --clean --skip=publish
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -48,8 +48,8 @@ jobs:
 
       - name: Generate SHAs and update bootstrap.sh
         run: |
-          VELLUM_AARCH64_SHA=$(sha256sum dist/vellum-linux-arm64 | cut -d' ' -f1)
-          VELLUM_ARMV7_SHA=$(sha256sum dist/vellum-linux-armv7 | cut -d' ' -f1)
+          VELLUM_AARCH64_SHA=$(grep vellum-linux-arm64 dist/checksums.txt | cut -d' ' -f1)
+          VELLUM_ARMV7_SHA=$(grep vellum-linux-armv7 dist/checksums.txt | cut -d' ' -f1)
           APK_AARCH64_SHA=$(sha256sum apk-aarch64 | cut -d' ' -f1)
           APK_ARMV7_SHA=$(sha256sum apk-armv7 | cut -d' ' -f1)
           KEY_SHA=$(sha256sum packages.rsa.pub | cut -d' ' -f1)
@@ -60,6 +60,11 @@ jobs:
           sed -i "s/__APK_AARCH64_SHA256__/$APK_AARCH64_SHA/" bootstrap.sh
           sed -i "s/__APK_ARMV7_SHA256__/$APK_ARMV7_SHA/" bootstrap.sh
           sed -i "s/__SIGNING_KEY_SHA256__/$KEY_SHA/" bootstrap.sh
+
+      - name: Upload bootstrap.sh to release
+        run: gh release upload ${{ github.ref_name }} bootstrap.sh --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Generate bootstrap SHA and update README
         run: |
@@ -75,12 +80,3 @@ jobs:
           git push origin HEAD:main
         env:
           GH_TOKEN: ${{ github.token }}
-
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/vellum-linux-arm64
-            dist/vellum-linux-armv7
-            bootstrap.sh
-          generate_release_notes: true

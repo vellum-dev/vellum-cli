@@ -1,15 +1,25 @@
 version: 2
 
 builds:
-  - id: vellum
+  - id: arm64
     main: ./cmd/vellum
-    binary: vellum
+    binary: vellum-linux-arm64
     env:
       - CGO_ENABLED=0
     goos:
       - linux
     goarch:
       - arm64
+    ldflags:
+      - -s -w
+  - id: armv7
+    main: ./cmd/vellum
+    binary: vellum-linux-armv7
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
       - arm
     goarm:
       - "7"
@@ -18,11 +28,7 @@ builds:
 
 archives:
   - format: binary
-    name_template: "vellum-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
-
-release:
-  extra_files:
-    - glob: bootstrap.sh
+    name_template: "{{ .Binary }}"
 
 checksum:
   name_template: "checksums.txt"
