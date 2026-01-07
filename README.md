@@ -6,7 +6,7 @@ Package manager for reMarkable tablets. Wraps Alpine's `apk` to work around reMa
 
 ```sh
 wget https://github.com/vellum-dev/vellum-cli/releases/latest/download/bootstrap.sh
-echo "78165568231e67141d3f8cbce7fb73adde981d5faf1b90022e882583db120900  bootstrap.sh" | sha256sum -c && bash bootstrap.sh
+echo "463e4cd96faa8cbeb1f432e2bc43f2c5dcf6c2fd5f7e4d471df8658cf76fe3e3  bootstrap.sh" | sha256sum -c && bash bootstrap.sh
 ```
 
 ## Usage
