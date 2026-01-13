@@ -2,31 +2,72 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux/arm64
+            triple: aarch64-unknown-linux-musl
+            output: vellum-linux-arm64
+          - platform: linux/arm/v7
+            triple: armv7-unknown-linux-musleabihf
+            output: vellum-linux-armv7
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build binary
+        run: |
+          docker build --platform ${{ matrix.platform }} -t vellum-build .
+          docker create --name extract vellum-build
+          docker cp extract:/src/build/${{ matrix.triple }}/release/vellum ./${{ matrix.output }}
+          docker rm extract
+
+      - name: Compress with UPX
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          files: ./${{ matrix.output }}
+          args: --best
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: ./${{ matrix.output }}
+
   release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/download-artifact@v4
         with:
-          go-version: "1.21"
+          path: binaries
+          merge-multiple: true
 
-      - name: Build and release with goreleaser
-        uses: goreleaser/goreleaser-action@v6
+      - name: Generate checksums
+        run: |
+          cd binaries
+          sha256sum vellum-linux-arm64 vellum-linux-armv7 > checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         with:
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            binaries/vellum-linux-arm64
+            binaries/vellum-linux-armv7
+            binaries/checksums.txt
 
       - name: Get latest apk-tools version and download binaries
         run: |
@@ -37,19 +78,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      # TODO: fetch from private repo or host publicly
-      # - name: Download signing key
-      #   run: |
-      #     gh api repos/vellum-dev/vellum/contents/keys/packages.rsa.pub --jq '.content' | base64 -d > packages.rsa.pub
-      #   env:
-      #     GH_TOKEN: ${{ github.token }}
-
-      # Signing key is bundled in repo for now (packages.rsa.pub)
-
       - name: Generate SHAs and update bootstrap.sh
         run: |
-          VELLUM_AARCH64_SHA=$(grep vellum-linux-arm64 dist/checksums.txt | cut -d' ' -f1)
-          VELLUM_ARMV7_SHA=$(grep vellum-linux-armv7 dist/checksums.txt | cut -d' ' -f1)
+          VELLUM_AARCH64_SHA=$(grep vellum-linux-arm64 binaries/checksums.txt | cut -d' ' -f1)
+          VELLUM_ARMV7_SHA=$(grep vellum-linux-armv7 binaries/checksums.txt | cut -d' ' -f1)
           APK_AARCH64_SHA=$(sha256sum apk-aarch64 | cut -d' ' -f1)
           APK_ARMV7_SHA=$(sha256sum apk-armv7 | cut -d' ' -f1)
           KEY_SHA=$(sha256sum packages.rsa.pub | cut -d' ' -f1)
