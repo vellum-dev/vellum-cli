@@ -1,17 +1,16 @@
 use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::Path;
 use std::process;
 
 use crate::apk::{
     check_os_compatibility, generate_remarkable_os_package, fetch_remote_index,
     parse_index_tar_gz, Apk, Package,
 };
+use crate::constants::{VELLUM_ROOT, VIRTUAL_PKGS};
 use crate::device::get_apk_arch;
 use crate::repo::update_index;
 use crate::state::State;
-
-const VELLUM_ROOT: &str = "/home/root/.vellum";
+use crate::util::remove_glob;
 
 pub fn handle_upgrade(
     state: &State,
@@ -32,7 +31,7 @@ pub fn handle_upgrade(
     }
 
     if os_mismatch {
-        println!("OS upgraded ({} -> {}). Checking package compatibility...", os_prev, os_cur);
+        println!("OS upgraded ({os_prev} -> {os_cur}). Checking package compatibility...");
         println!();
 
         let incompatible = check_os_compatibility_internal(apk, os_cur);
@@ -44,9 +43,9 @@ pub fn handle_upgrade(
 
         let incompatible = incompatible.unwrap();
         if !incompatible.is_empty() {
-            println!("These packages have no version compatible with OS {}:", os_cur);
+            println!("These packages have no version compatible with OS {os_cur}:");
             for pkg in &incompatible {
-                println!("  - {}", pkg);
+                println!("  - {pkg}");
             }
             println!();
             println!("Either wait for them to be updated, or remove them with 'vellum del <package>'.");
@@ -57,15 +56,25 @@ pub fn handle_upgrade(
         println!("All packages have compatible versions. Syncing OS version...");
 
         let arch = get_apk_arch();
-        let repo_dir = format!("{}/local-repo/{}", VELLUM_ROOT, arch);
-        let key_path = format!("{}/etc/apk/keys/local.rsa", VELLUM_ROOT);
+        let repo_dir = format!("{VELLUM_ROOT}/local-repo/{arch}");
+        let key_path = format!("{VELLUM_ROOT}/etc/apk/keys/local.rsa");
 
-        let _ = fs::create_dir_all(&repo_dir);
-        remove_glob(&format!("{}/remarkable-os-*.apk", repo_dir));
-        let _ = generate_remarkable_os_package(os_cur, &repo_dir);
-        let _ = update_index(&repo_dir, Some(&key_path));
-        let _ = state.set_os_version(os_cur);
-        let _ = apk.run_silent(&["add", "remarkable-os"]);
+        if let Err(e) = fs::create_dir_all(&repo_dir) {
+            eprintln!("warning: failed to create repo directory: {e}");
+        }
+        remove_glob(&format!("{repo_dir}/remarkable-os-*.apk"));
+        if let Err(e) = generate_remarkable_os_package(os_cur, &repo_dir, &key_path) {
+            eprintln!("warning: failed to generate remarkable-os package: {e}");
+        }
+        if let Err(e) = update_index(&repo_dir, Some(&key_path)) {
+            eprintln!("warning: failed to update local repo index: {e}");
+        }
+        if let Err(e) = state.set_os_version(os_cur) {
+            eprintln!("warning: failed to save OS version: {e}");
+        }
+        if let Err(e) = apk.run_silent(&["add", "remarkable-os"]) {
+            eprintln!("warning: failed to register remarkable-os package: {e}");
+        }
 
         println!("Upgrading packages...");
     }
@@ -76,7 +85,7 @@ pub fn handle_upgrade(
     let output = match apk.output(&simulate_args) {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("Failed to check for upgrades: {}", e);
+            eprintln!("Failed to check for upgrades: {e}");
             process::exit(1);
         }
     };
@@ -103,7 +112,7 @@ pub fn handle_upgrade(
     if !upgrade_yes {
         println!("The following {} package(s) will be upgraded:", packages.len());
         for pkg in &packages {
-            println!("  - {}", pkg);
+            println!("  - {pkg}");
         }
         print!("\nProceed with upgrade? [y/N] ");
         let _ = io::stdout().flush();
@@ -123,7 +132,7 @@ pub fn handle_upgrade(
     upgrade_args.extend(remaining_args.iter().map(|s| s.as_str()));
 
     if let Err(e) = apk.exec(&upgrade_args) {
-        eprintln!("exec error: {}", e);
+        eprintln!("exec error: {e}");
         process::exit(1);
     }
 }
@@ -131,17 +140,12 @@ pub fn handle_upgrade(
 fn check_os_compatibility_internal(apk: &Apk, target_os: &str) -> Option<Vec<String>> {
     let installed = match apk.list_installed() {
         Ok(list) => list,
-        Err(e) => {
-            eprintln!("[debug] Failed to list installed packages: {}", e);
-            return None;
-        }
+        Err(_) => return None,
     };
-
-    let virtual_pkgs: Vec<&str> = vec!["remarkable-os", "rm1", "rm2", "rmpp", "rmppm"];
 
     let filtered: Vec<String> = installed
         .into_iter()
-        .filter(|p| !virtual_pkgs.contains(&p.as_str()))
+        .filter(|p| !VIRTUAL_PKGS.contains(&p.as_str()))
         .collect();
 
     if filtered.is_empty() {
@@ -150,10 +154,7 @@ fn check_os_compatibility_internal(apk: &Apk, target_os: &str) -> Option<Vec<Str
 
     let index = match get_index() {
         Ok(idx) => idx,
-        Err(e) => {
-            eprintln!("[debug] Failed to get package index: {}", e);
-            return None;
-        }
+        Err(_) => return None,
     };
 
     let mut installed_with_os_dep = Vec::new();
@@ -174,48 +175,32 @@ fn check_os_compatibility_internal(apk: &Apk, target_os: &str) -> Option<Vec<Str
 }
 
 fn get_index() -> anyhow::Result<Vec<Package>> {
-    let cache_dir = format!("{}/etc/apk/cache", VELLUM_ROOT);
-
-    eprintln!("[debug] Looking for cached index in: {}", cache_dir);
+    let cache_dir = format!("{VELLUM_ROOT}/etc/apk/cache");
 
     if let Ok(entries) = fs::read_dir(&cache_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with("APKINDEX.") && name.ends_with(".tar.gz") {
-                    eprintln!("[debug] Found cached index: {}", path.display());
-                    return parse_index_tar_gz(path.to_str().unwrap());
+                    if let Some(path_str) = path.to_str() {
+                        return parse_index_tar_gz(path_str);
+                    }
                 }
             }
         }
     }
 
-    eprintln!("[debug] No cached index found, fetching from remote");
-
     let repo_url = match get_repo_url() {
-        Some(url) => {
-            eprintln!("[debug] Repository URL: {}", url);
-            url
-        }
-        None => {
-            let repos_file = format!("{}/etc/apk/repositories", VELLUM_ROOT);
-            if let Ok(content) = fs::read_to_string(&repos_file) {
-                eprintln!("[debug] repositories file contents:\n{}", content);
-            } else {
-                eprintln!("[debug] Could not read repositories file: {}", repos_file);
-            }
-            return Err(anyhow::anyhow!("no cached index and could not determine repository URL"));
-        }
+        Some(url) => url,
+        None => return Err(anyhow::anyhow!("no cached index and could not determine repository URL")),
     };
 
     let arch = get_apk_arch();
-    eprintln!("[debug] Fetching index for arch: {}", arch);
-
     fetch_remote_index(&repo_url, &arch)
 }
 
 fn get_repo_url() -> Option<String> {
-    let repos_file = format!("{}/etc/apk/repositories", VELLUM_ROOT);
+    let repos_file = format!("{VELLUM_ROOT}/etc/apk/repositories");
     let content = fs::read_to_string(repos_file).ok()?;
 
     for line in content.lines() {
@@ -230,28 +215,3 @@ fn get_repo_url() -> Option<String> {
     None
 }
 
-fn remove_glob(pattern: &str) {
-    let dir = Path::new(pattern).parent().unwrap_or(Path::new("."));
-    let file_pattern = Path::new(pattern)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if matches_glob(name, file_pattern) {
-                    let _ = fs::remove_file(entry.path());
-                }
-            }
-        }
-    }
-}
-
-fn matches_glob(name: &str, pattern: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix("*.apk") {
-        name.starts_with(prefix) && name.ends_with(".apk")
-    } else {
-        name == pattern
-    }
-}

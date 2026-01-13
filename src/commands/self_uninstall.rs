@@ -23,7 +23,7 @@ pub fn handle_self_uninstall(apk: &Apk, vellum_root: &str, args: &[String]) {
         } else {
             "This will remove vellum"
         };
-        print!("{}. Continue? [y/N] ", msg);
+        print!("{msg}. Continue? [y/N] ");
         let _ = io::stdout().flush();
 
         let stdin = io::stdin();
@@ -42,7 +42,9 @@ pub fn handle_self_uninstall(apk: &Apk, vellum_root: &str, args: &[String]) {
         env::set_var("VELLUM_PURGE", "1");
         if let Ok(installed) = apk.list_installed() {
             for pkg in installed {
-                let _ = apk.run_silent(&["del", "--purge", &pkg]);
+                if let Err(e) = apk.run_silent(&["del", "--purge", &pkg]) {
+                    eprintln!("warning: failed to remove {pkg}: {e}");
+                }
             }
         }
     }
@@ -50,16 +52,20 @@ pub fn handle_self_uninstall(apk: &Apk, vellum_root: &str, args: &[String]) {
     println!("Removing vellum...");
 
     if let Ok(home) = env::var("HOME") {
-        let bashrc = format!("{}/.bashrc", home);
+        let bashrc = format!("{home}/.bashrc");
         if let Ok(content) = fs::read_to_string(&bashrc) {
             let new_lines: Vec<&str> = content
                 .lines()
                 .filter(|line| !line.contains(".vellum"))
                 .collect();
-            let _ = fs::write(&bashrc, new_lines.join("\n"));
+            if let Err(e) = fs::write(&bashrc, new_lines.join("\n")) {
+                eprintln!("warning: failed to update {bashrc}: {e}");
+            }
         }
     }
 
-    let _ = fs::remove_dir_all(vellum_root);
+    if let Err(e) = fs::remove_dir_all(vellum_root) {
+        eprintln!("warning: failed to remove {vellum_root}: {e}");
+    }
     println!("Vellum has been removed.");
 }

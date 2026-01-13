@@ -13,7 +13,7 @@ pub struct TestingManager {
 impl TestingManager {
     pub fn new(vellum_root: &str) -> Self {
         Self {
-            repos_path: format!("{}/etc/apk/repositories", vellum_root),
+            repos_path: format!("{vellum_root}/etc/apk/repositories"),
         }
     }
 
@@ -36,7 +36,7 @@ impl TestingManager {
             }
         }
 
-        let testing_line = format!("{} {}", TESTING_TAG, TESTING_REPO_URL);
+        let testing_line = format!("{TESTING_TAG} {TESTING_REPO_URL}");
         let mut new_lines = Vec::new();
         let mut inserted = false;
 
@@ -90,7 +90,7 @@ pub fn handle_testing(vellum_root: &str, args: &[String]) {
                 return;
             }
             if let Err(e) = mgr.enable() {
-                eprintln!("Error enabling testing repository: {}", e);
+                eprintln!("Error enabling testing repository: {e}");
                 process::exit(1);
             }
             println!("Testing repository enabled.");
@@ -104,7 +104,7 @@ pub fn handle_testing(vellum_root: &str, args: &[String]) {
                 return;
             }
             if let Err(e) = mgr.disable() {
-                eprintln!("Error disabling testing repository: {}", e);
+                eprintln!("Error disabling testing repository: {e}");
                 process::exit(1);
             }
             println!("Testing repository disabled.");
@@ -118,7 +118,7 @@ pub fn handle_testing(vellum_root: &str, args: &[String]) {
             }
         }
         cmd => {
-            eprintln!("Unknown testing command: {}", cmd);
+            eprintln!("Unknown testing command: {cmd}");
             println!("Usage: vellum testing <enable|disable|status>");
             process::exit(1);
         }

@@ -1,10 +1,9 @@
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::Write;
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::{anyhow, Result};
-use base64::prelude::*;
-use flate2::bufread::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use pkcs1::DecodeRsaPrivateKey;
@@ -12,7 +11,7 @@ use pkcs8::DecodePrivateKey;
 use rsa::pkcs1v15::Pkcs1v15Sign;
 use rsa::RsaPrivateKey;
 use sha1::{Digest, Sha1};
-use tar::{Archive, Builder, Header};
+use tar::{Builder, Header};
 
 pub fn update_index(repo_dir: &str, key_path: Option<&str>) -> Result<()> {
     let apks: Vec<_> = fs::read_dir(repo_dir)?
@@ -26,31 +25,39 @@ pub fn update_index(repo_dir: &str, key_path: Option<&str>) -> Result<()> {
         .map(|e| e.path())
         .collect();
 
-    let mut index_buf = Vec::new();
-    for apk_path in &apks {
-        append_package_to_index(&mut index_buf, apk_path)?;
-    }
-
-    let mut unsigned_buf = Vec::new();
-    {
-        let mut gz = GzEncoder::new(&mut unsigned_buf, Compression::default());
-        {
-            let mut tar = Builder::new(&mut gz);
-
-            let mut header = Header::new_gnu();
-            header.set_path("APKINDEX")?;
-            header.set_mode(0o644);
-            header.set_size(index_buf.len() as u64);
-            header.set_entry_type(tar::EntryType::Regular);
-            header.set_cksum();
-            tar.append(&header, index_buf.as_slice())?;
-
-            tar.finish()?;
-        }
-        gz.finish()?;
+    if apks.is_empty() {
+        return Err(anyhow!("no .apk files found in {repo_dir}"));
     }
 
     let output_path = Path::new(repo_dir).join("APKINDEX.tar.gz");
+    let temp_path = Path::new(repo_dir).join(".APKINDEX.unsigned.tar.gz");
+
+    let vellum_root = Path::new(repo_dir)
+        .parent()
+        .and_then(|p| p.parent())
+        .ok_or_else(|| anyhow!("could not determine vellum root"))?;
+
+    let apk_bin = vellum_root.join("bin").join("apk.vellum");
+    let keys_dir = vellum_root.join("etc").join("apk").join("keys");
+
+    let mut cmd = Command::new(&apk_bin);
+    cmd.arg("index")
+        .arg("--keys-dir")
+        .arg(&keys_dir)
+        .arg("-o")
+        .arg(&temp_path)
+        .args(apks.iter().map(|p| p.as_os_str()));
+
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(anyhow!(
+            "apk index failed with code {}",
+            status.code().unwrap_or(-1)
+        ));
+    }
+
+    let unsigned_buf = fs::read(&temp_path)?;
+    let _ = fs::remove_file(&temp_path);
 
     if let Some(key_path) = key_path {
         if let Ok(key_data) = fs::read_to_string(key_path) {
@@ -62,65 +69,10 @@ pub fn update_index(repo_dir: &str, key_path: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn append_package_to_index(w: &mut Vec<u8>, apk_path: &Path) -> Result<()> {
-    let data = fs::read(apk_path)?;
-    let size = data.len();
-
-    let mut hasher = Sha1::new();
-    hasher.update(&data);
-    let cksum = BASE64_STANDARD.encode(hasher.finalize());
-
-    // APK files are concatenated gzip streams: signature, control (.PKGINFO), data
-    let gz = MultiGzDecoder::new(Cursor::new(&data));
-    let mut archive = Archive::new(gz);
-
-    let mut pkginfo = None;
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?.to_string_lossy().to_string();
-        if path == ".PKGINFO" {
-            let mut content = String::new();
-            entry.read_to_string(&mut content)?;
-            pkginfo = Some(content);
-            break;
-        }
-    }
-
-    let pkginfo = pkginfo.ok_or_else(|| anyhow!("no .PKGINFO found"))?;
-
-    writeln!(w, "C:Q1{}", cksum)?;
-
-    for line in pkginfo.lines() {
-        let parts: Vec<&str> = line.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            continue;
-        }
-        let key = parts[0].trim();
-        let val = parts[1].trim();
-        match key {
-            "pkgname" => writeln!(w, "P:{}", val)?,
-            "pkgver" => writeln!(w, "V:{}", val)?,
-            "arch" => writeln!(w, "A:{}", val)?,
-            "pkgdesc" => writeln!(w, "T:{}", val)?,
-            "url" => writeln!(w, "U:{}", val)?,
-            "license" => writeln!(w, "L:{}", val)?,
-            "provides" => writeln!(w, "p:{}", val)?,
-            "depends" => writeln!(w, "D:{}", val)?,
-            _ => {}
-        }
-    }
-
-    writeln!(w, "S:{}", size)?;
-    writeln!(w, "I:0")?;
-    writeln!(w)?;
-
-    Ok(())
-}
-
 fn write_signed_index(output_path: &Path, unsigned_data: &[u8], key_pem: &str) -> Result<()> {
     let key = RsaPrivateKey::from_pkcs1_pem(key_pem)
         .or_else(|_| RsaPrivateKey::from_pkcs8_pem(key_pem))
-        .map_err(|e| anyhow!("failed to parse private key: {}", e))?;
+        .map_err(|e| anyhow!("failed to parse private key: {e}"))?;
 
     let mut hasher = Sha1::new();
     hasher.update(unsigned_data);

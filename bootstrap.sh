@@ -154,48 +154,12 @@ LOCAL_KEY="$VELLUM_ROOT/etc/apk/keys/local.rsa"
     cd "$VELLUM_ROOT/local-repo/$APK_ARCH"
     touch APKINDEX
     tar -czf unsigned.tar.gz APKINDEX
-
-    echo "[debug] unsigned.tar.gz size: $(stat -c %s unsigned.tar.gz 2>/dev/null || stat -f %z unsigned.tar.gz)"
-    echo "[debug] unsigned.tar.gz sha1: $(sha1sum unsigned.tar.gz 2>/dev/null || shasum unsigned.tar.gz)"
-
     openssl dgst -sha1 -sign "$LOCAL_KEY" -out ".SIGN.RSA.local.rsa.pub" unsigned.tar.gz
-
-    echo "[debug] signature size: $(stat -c %s .SIGN.RSA.local.rsa.pub 2>/dev/null || stat -f %z .SIGN.RSA.local.rsa.pub)"
-    echo "[debug] signature hex (first 32 bytes): $(xxd -l 32 -p .SIGN.RSA.local.rsa.pub 2>/dev/null || hexdump -n 32 -e '32/1 "%02x"' .SIGN.RSA.local.rsa.pub)"
-
     tar -cf sig.tar .SIGN.RSA.local.rsa.pub
     SIG_SIZE=$(stat -c %s ".SIGN.RSA.local.rsa.pub" 2>/dev/null || stat -f %z ".SIGN.RSA.local.rsa.pub")
     CONTENT_BLOCKS=$(( (512 + SIG_SIZE + 511) / 512 ))
-
-    echo "[debug] sig.tar content blocks: $CONTENT_BLOCKS"
-
     dd if=sig.tar bs=512 count=$CONTENT_BLOCKS 2>/dev/null | gzip -n -9 > sig.tar.gz
     cat sig.tar.gz unsigned.tar.gz > APKINDEX.tar.gz
-
-    echo "[debug] final APKINDEX.tar.gz size: $(stat -c %s APKINDEX.tar.gz 2>/dev/null || stat -f %z APKINDEX.tar.gz)"
-    echo "[debug] public key format:"
-    head -n 1 "$VELLUM_ROOT/etc/apk/keys/local.rsa.pub"
-
-    # Verify the signature is valid
-    echo "[debug] verifying signature with openssl..."
-    if openssl dgst -sha1 -verify "$VELLUM_ROOT/etc/apk/keys/local.rsa.pub" -signature ".SIGN.RSA.local.rsa.pub" unsigned.tar.gz 2>&1; then
-        echo "[debug] signature verification: PASSED"
-    else
-        echo "[debug] signature verification: FAILED"
-    fi
-
-    echo "[debug] signature filename in tar: .SIGN.RSA.local.rsa.pub"
-    echo "[debug] keys in apk/keys directory:"
-    ls -la "$VELLUM_ROOT/etc/apk/keys/"
-    echo "[debug] local.rsa.pub header:"
-    head -n 1 "$VELLUM_ROOT/etc/apk/keys/local.rsa.pub"
-    echo "[debug] packages.rsa.pub header:"
-    head -n 1 "$VELLUM_ROOT/etc/apk/keys/packages.rsa.pub"
-
-    # Keep files for comparison
-    cp APKINDEX.tar.gz /tmp/local-apkindex.tar.gz
-    echo "[debug] saved to /tmp/local-apkindex.tar.gz for analysis"
-
     rm -f APKINDEX unsigned.tar.gz sig.tar sig.tar.gz .SIGN.RSA.local.rsa.pub
 )
 

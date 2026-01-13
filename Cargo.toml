@@ -9,7 +9,7 @@ flate2 = "1"
 tar = "0.4"
 rsa = "0.9"
 sha1 = { version = "0.10", features = ["oid"] }
-base64 = "0.22"
+sha2 = "0.10"
 pkcs8 = "0.10"
 pkcs1 = "0.7"
 anyhow = "1"

@@ -1,8 +1,10 @@
 mod apk;
 mod commands;
+mod constants;
 mod device;
 mod repo;
 mod state;
+mod util;
 
 use std::env;
 use std::fs;
@@ -14,11 +16,11 @@ use commands::{
     handle_add, handle_check_os, handle_del, handle_purge, handle_reenable,
     handle_self_uninstall, handle_testing, handle_upgrade,
 };
+use constants::VELLUM_ROOT;
 use device::{get_apk_arch, get_device_type, get_os_version};
 use repo::update_index;
 use state::State;
-
-const VELLUM_ROOT: &str = "/home/root/.vellum";
+use util::remove_glob;
 
 struct AppState {
     os_mismatch: bool,
@@ -52,16 +54,16 @@ fn main() {
 
     match cmd.as_str() {
         "--help" | "-h" => show_help(&apk),
-        "install" => handle_add(&apk, &args[2..].to_vec()),
-        "remove" => handle_del(&apk, &args[2..].to_vec()),
-        "purge" => handle_purge(&apk, &args[2..].to_vec()),
-        "show" => handle_show(&apk, &args[2..].to_vec()),
-        "add" => handle_add(&apk, &args[2..].to_vec()),
-        "del" => handle_del(&apk, &args[2..].to_vec()),
+        "install" => handle_add(&apk, &args[2..]),
+        "remove" => handle_del(&apk, &args[2..]),
+        "purge" => handle_purge(&apk, &args[2..]),
+        "show" => handle_show(&apk, &args[2..]),
+        "add" => handle_add(&apk, &args[2..]),
+        "del" => handle_del(&apk, &args[2..]),
         "upgrade" => handle_upgrade(
             &state,
             &apk,
-            &args[2..].to_vec(),
+            &args[2..],
             app_state.os_mismatch,
             &app_state.os_prev,
             &app_state.os_cur,
@@ -77,18 +79,18 @@ fn main() {
         }
         "self" => {
             if args.len() > 2 && args[2] == "uninstall" {
-                handle_self_uninstall(&apk, VELLUM_ROOT, &args[3..].to_vec());
+                handle_self_uninstall(&apk, VELLUM_ROOT, &args[3..]);
             } else {
                 eprintln!("Unknown self command");
                 eprintln!("Usage: vellum self uninstall [--all] [--yes]");
                 process::exit(1);
             }
         }
-        "testing" => handle_testing(VELLUM_ROOT, &args[2..].to_vec()),
+        "testing" => handle_testing(VELLUM_ROOT, &args[2..]),
         _ => {
             let pass_args: Vec<&str> = args[1..].iter().map(|s| s.as_str()).collect();
             if let Err(e) = apk.exec(&pass_args) {
-                eprintln!("exec error: {}", e);
+                eprintln!("exec error: {e}");
                 process::exit(1);
             }
         }
@@ -113,20 +115,26 @@ fn ensure_remarkable_os(state: &State, apk: &Apk) -> AppState {
 
     let os_prev = state.get_os_version().unwrap_or_default();
     let arch = get_apk_arch();
-    let repo_dir = format!("{}/local-repo/{}", VELLUM_ROOT, arch);
-    let key_path = format!("{}/etc/apk/keys/local.rsa", VELLUM_ROOT);
+    let repo_dir = format!("{VELLUM_ROOT}/local-repo/{arch}");
+    let key_path = format!("{VELLUM_ROOT}/etc/apk/keys/local.rsa");
 
     if os_prev.is_empty() {
-        let _ = fs::create_dir_all(&repo_dir);
-        remove_glob(&format!("{}/remarkable-os-*.apk", repo_dir));
-        if let Err(e) = generate_remarkable_os_package(&os_cur, &repo_dir) {
-            eprintln!("warning: failed to generate remarkable-os package: {}", e);
+        if let Err(e) = fs::create_dir_all(&repo_dir) {
+            eprintln!("warning: failed to create repo directory: {e}");
+        }
+        remove_glob(&format!("{repo_dir}/remarkable-os-*.apk"));
+        if let Err(e) = generate_remarkable_os_package(&os_cur, &repo_dir, &key_path) {
+            eprintln!("warning: failed to generate remarkable-os package: {e}");
         }
         if let Err(e) = update_index(&repo_dir, Some(&key_path)) {
-            eprintln!("warning: failed to update local repo index: {}", e);
+            eprintln!("warning: failed to update local repo index: {e}");
         }
-        let _ = state.set_os_version(&os_cur);
-        let _ = apk.run_silent(&["add", "remarkable-os"]);
+        if let Err(e) = state.set_os_version(&os_cur) {
+            eprintln!("warning: failed to save OS version: {e}");
+        }
+        if let Err(e) = apk.run_silent(&["add", "remarkable-os"]) {
+            eprintln!("warning: failed to register remarkable-os package: {e}");
+        }
 
         AppState {
             os_mismatch: false,
@@ -152,24 +160,30 @@ fn ensure_device_package(state: &State, apk: &Apk) {
     let device_type = get_device_type();
     let prev_device = state.get_device().unwrap_or_default();
     let arch = get_apk_arch();
-    let repo_dir = format!("{}/local-repo/{}", VELLUM_ROOT, arch);
-    let key_path = format!("{}/etc/apk/keys/local.rsa", VELLUM_ROOT);
+    let repo_dir = format!("{VELLUM_ROOT}/local-repo/{arch}");
+    let key_path = format!("{VELLUM_ROOT}/etc/apk/keys/local.rsa");
 
-    let pkg_path = format!("{}/{}-1.0.0-r0.apk", repo_dir, device_type);
+    let pkg_path = format!("{repo_dir}/{device_type}-1.0.0-r0.apk");
 
     if device_type != prev_device || !Path::new(&pkg_path).exists() {
-        let _ = fs::create_dir_all(&repo_dir);
-        for d in &["rm1", "rm2", "rmpp", "rmppm"] {
-            remove_glob(&format!("{}/{}-*.apk", repo_dir, d));
+        if let Err(e) = fs::create_dir_all(&repo_dir) {
+            eprintln!("warning: failed to create repo directory: {e}");
         }
-        if let Err(e) = generate_device_package(&device_type, &repo_dir) {
-            eprintln!("warning: failed to generate device package: {}", e);
+        for d in &["rm1", "rm2", "rmpp", "rmppm"] {
+            remove_glob(&format!("{repo_dir}/{d}-*.apk"));
+        }
+        if let Err(e) = generate_device_package(&device_type, &repo_dir, &key_path) {
+            eprintln!("warning: failed to generate device package: {e}");
         }
         if let Err(e) = update_index(&repo_dir, Some(&key_path)) {
-            eprintln!("warning: failed to update local repo index: {}", e);
+            eprintln!("warning: failed to update local repo index: {e}");
         }
-        let _ = state.set_device(&device_type);
-        let _ = apk.run_silent(&["add", &device_type]);
+        if let Err(e) = state.set_device(&device_type) {
+            eprintln!("warning: failed to save device type: {e}");
+        }
+        if let Err(e) = apk.run_silent(&["add", &device_type]) {
+            eprintln!("warning: failed to register device package: {e}");
+        }
     }
 }
 
@@ -205,28 +219,3 @@ fn handle_show(apk: &Apk, args: &[String]) {
     }
 }
 
-fn remove_glob(pattern: &str) {
-    let dir = Path::new(pattern).parent().unwrap_or(Path::new("."));
-    let file_pattern = Path::new(pattern)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if matches_glob(name, file_pattern) {
-                    let _ = fs::remove_file(entry.path());
-                }
-            }
-        }
-    }
-}
-
-fn matches_glob(name: &str, pattern: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix("*.apk") {
-        name.starts_with(prefix) && name.ends_with(".apk")
-    } else {
-        name == pattern
-    }
-}

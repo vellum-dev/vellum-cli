@@ -29,13 +29,6 @@ impl Apk {
         ]
     }
 
-    fn apk_config(&self) -> String {
-        format!(
-            "APK_CONFIG={}",
-            self.root.join("etc").join("apk").join("config").display()
-        )
-    }
-
     pub fn run(&self, args: &[&str]) -> Result<()> {
         let mut cmd_args = self.base_args();
         cmd_args.extend(args.iter().map(|s| s.to_string()));
@@ -97,7 +90,7 @@ impl Apk {
             .env("APK_CONFIG", self.root.join("etc").join("apk").join("config"))
             .exec();
 
-        Err(anyhow::anyhow!("exec failed: {}", err))
+        Err(anyhow::anyhow!("exec failed: {err}"))
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {

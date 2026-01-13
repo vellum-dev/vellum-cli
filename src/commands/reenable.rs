@@ -2,10 +2,10 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{self, Command};
 
-const VELLUM_ROOT: &str = "/home/root/.vellum";
+use crate::constants::VELLUM_ROOT;
 
 pub fn handle_reenable() {
-    let hooks_dir = format!("{}/hooks/post-os-upgrade", VELLUM_ROOT);
+    let hooks_dir = format!("{VELLUM_ROOT}/hooks/post-os-upgrade");
 
     let entries = match fs::read_dir(&hooks_dir) {
         Ok(e) => e,
@@ -23,10 +23,12 @@ pub fn handle_reenable() {
 
     println!("Re-enabling packages after OS upgrade...");
 
-    let mount_rw = format!("{}/bin/mount-rw", VELLUM_ROOT);
-    let mount_restore = format!("{}/bin/mount-restore", VELLUM_ROOT);
+    let mount_rw = format!("{VELLUM_ROOT}/bin/mount-rw");
+    let mount_restore = format!("{VELLUM_ROOT}/bin/mount-restore");
 
-    let _ = run_command(&mount_rw);
+    if run_command(&mount_rw).is_err() {
+        eprintln!("warning: failed to remount filesystem read-write");
+    }
 
     for entry in entries {
         let path = entry.path();
@@ -45,14 +47,18 @@ pub fn handle_reenable() {
 
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        println!("  {}", name);
+        println!("  {name}");
 
-        if run_command(path.to_str().unwrap()).is_err() {
-            println!("    warning: {} reenable script failed", name);
+        if let Some(path_str) = path.to_str() {
+            if run_command(path_str).is_err() {
+                println!("    warning: {name} reenable script failed");
+            }
         }
     }
 
-    let _ = run_command(&mount_restore);
+    if run_command(&mount_restore).is_err() {
+        eprintln!("warning: failed to restore filesystem mounts");
+    }
     println!("Done.");
 }
 

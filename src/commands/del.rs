@@ -30,7 +30,7 @@ pub fn handle_purge(apk: &Apk, args: &[String]) {
 
     std::env::set_var("VELLUM_PURGE", "1");
 
-    let mut cmd_args = vec!["del", "--purge"];
+    let mut cmd_args = vec!["del", "--purge", "--preserve-env"];
     cmd_args.extend(args.iter().map(|s| s.as_str()));
 
     if apk.run(&cmd_args).is_err() {

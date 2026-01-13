@@ -3,12 +3,11 @@ use std::fs;
 use std::process;
 
 use crate::apk::{fetch_remote_index, parse_index_tar_gz, Apk, Package};
+use crate::constants::{VELLUM_ROOT, VIRTUAL_PKGS};
 use crate::device::get_apk_arch;
 
-const VELLUM_ROOT: &str = "/home/root/.vellum";
-
 pub fn handle_check_os(apk: &Apk, target_os: &str) {
-    println!("Checking package compatibility with OS {}...\n", target_os);
+    println!("Checking package compatibility with OS {target_os}...\n");
 
     let installed = match apk.list_installed() {
         Ok(pkgs) => pkgs,
@@ -18,11 +17,9 @@ pub fn handle_check_os(apk: &Apk, target_os: &str) {
         }
     };
 
-    let virtual_pkgs: Vec<&str> = vec!["remarkable-os", "rm1", "rm2", "rmpp", "rmppm"];
-
     let user_pkgs: Vec<String> = installed
         .into_iter()
-        .filter(|p| !virtual_pkgs.contains(&p.as_str()))
+        .filter(|p| !VIRTUAL_PKGS.contains(&p.as_str()))
         .collect();
 
     if user_pkgs.is_empty() {
@@ -33,7 +30,7 @@ pub fn handle_check_os(apk: &Apk, target_os: &str) {
     let index = match get_index() {
         Ok(idx) => idx,
         Err(e) => {
-            eprintln!("Could not get package index: {}", e);
+            eprintln!("Could not get package index: {e}");
             process::exit(1);
         }
     };
@@ -72,7 +69,7 @@ pub fn handle_check_os(apk: &Apk, target_os: &str) {
     if !compatible.is_empty() {
         println!("Compatible packages:");
         for pkg in &compatible {
-            println!("  + {}", pkg);
+            println!("  + {pkg}");
         }
         println!();
     }
@@ -80,7 +77,7 @@ pub fn handle_check_os(apk: &Apk, target_os: &str) {
     if !no_constraint.is_empty() {
         println!("Packages without OS constraints (assumed compatible):");
         for pkg in &no_constraint {
-            println!("  - {}", pkg);
+            println!("  - {pkg}");
         }
         println!();
     }
@@ -88,7 +85,7 @@ pub fn handle_check_os(apk: &Apk, target_os: &str) {
     if !incompatible.is_empty() {
         println!("Incompatible packages (no version available for this OS):");
         for pkg in &incompatible {
-            println!("  x {}", pkg);
+            println!("  x {pkg}");
         }
         println!();
         process::exit(1);
@@ -98,14 +95,16 @@ pub fn handle_check_os(apk: &Apk, target_os: &str) {
 }
 
 fn get_index() -> anyhow::Result<Vec<Package>> {
-    let cache_dir = format!("{}/etc/apk/cache", VELLUM_ROOT);
+    let cache_dir = format!("{VELLUM_ROOT}/etc/apk/cache");
 
     if let Ok(entries) = fs::read_dir(&cache_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with("APKINDEX.") && name.ends_with(".tar.gz") {
-                    return parse_index_tar_gz(path.to_str().unwrap());
+                    if let Some(path_str) = path.to_str() {
+                        return parse_index_tar_gz(path_str);
+                    }
                 }
             }
         }
@@ -120,7 +119,7 @@ fn get_index() -> anyhow::Result<Vec<Package>> {
 }
 
 fn get_repo_url() -> Option<String> {
-    let repos_file = format!("{}/etc/apk/repositories", VELLUM_ROOT);
+    let repos_file = format!("{VELLUM_ROOT}/etc/apk/repositories");
     let content = fs::read_to_string(repos_file).ok()?;
 
     for line in content.lines() {
