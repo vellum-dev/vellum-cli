@@ -22,6 +22,8 @@ use repo::update_index;
 use state::State;
 use util::remove_glob;
 
+const VERSION: &str = env!("VELLUM_VERSION");
+
 struct AppState {
     os_mismatch: bool,
     os_cur: String,
@@ -54,6 +56,7 @@ fn main() {
 
     match cmd.as_str() {
         "--help" | "-h" => show_help(&apk),
+        "--version" | "-V" | "version" => println!("vellum {VERSION}"),
         "install" => handle_add(&apk, &args[2..]),
         "remove" => handle_del(&apk, &args[2..]),
         "purge" => handle_purge(&apk, &args[2..]),
@@ -191,7 +194,7 @@ fn ensure_device_package(state: &State, apk: &Apk) {
 
 fn show_help(apk: &Apk) {
     println!(
-        r#"Vellum package manager for reMarkable
+        r#"vellum {VERSION} - package manager for reMarkable
 
 Usage: vellum <command> [options]
 
