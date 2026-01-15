@@ -42,7 +42,7 @@ pub fn handle_self_uninstall(apk: &Apk, vellum_root: &str, args: &[String]) {
         env::set_var("VELLUM_PURGE", "1");
         if let Ok(installed) = apk.list_installed() {
             for pkg in installed {
-                if let Err(e) = apk.run_silent(&["del", "--purge", &pkg]) {
+                if let Err(e) = apk.run_silent(&["del", "--purge", "--preserve-env", &pkg]) {
                     eprintln!("warning: failed to remove {pkg}: {e}");
                 }
             }
