@@ -2,7 +2,7 @@
 FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
 
 FROM --platform=$BUILDPLATFORM rust:alpine AS builder
-RUN apk add --no-cache clang lld musl-dev
+RUN apk add --no-cache clang lld musl-dev git
 COPY --from=xx / /
 
 WORKDIR /src
