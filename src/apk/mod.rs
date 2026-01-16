@@ -6,5 +6,6 @@ mod version;
 
 pub use compat::check_os_compatibility;
 pub use exec::Apk;
-pub use index::{fetch_remote_index, parse_index_tar_gz, Package};
+pub use index::{fetch_remote_index, find_best_compatible_version, parse_index_tar_gz, Package};
 pub use package::{generate_device_package, generate_remarkable_os_package};
+pub use version::version_lt;

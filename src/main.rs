@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-use apk::{generate_device_package, generate_remarkable_os_package, Apk};
+use apk::{generate_device_package, generate_remarkable_os_package, version_lt, Apk};
 use commands::{
     handle_add, handle_check_os, handle_del, handle_purge, handle_reenable,
     handle_self_uninstall, handle_testing, handle_upgrade,
@@ -47,8 +47,10 @@ fn main() {
     let cmd = &args[1];
 
     if app_state.os_mismatch && !is_allowed_during_mismatch(cmd) {
+        let is_downgrade = version_lt(&app_state.os_cur, &app_state.os_prev);
+        let action = if is_downgrade { "downgraded" } else { "upgraded" };
         println!();
-        println!("OS upgraded ({} -> {}).", app_state.os_prev, app_state.os_cur);
+        println!("OS {action} ({} -> {}).", app_state.os_prev, app_state.os_cur);
         println!("Run 'vellum upgrade' to sync packages with new OS version.");
         println!();
         process::exit(1);
@@ -132,11 +134,27 @@ fn ensure_remarkable_os(state: &State, apk: &Apk) -> AppState {
         if let Err(e) = update_index(&repo_dir, Some(&key_path)) {
             eprintln!("warning: failed to update local repo index: {e}");
         }
-        if let Err(e) = state.set_os_version(&os_cur) {
-            eprintln!("warning: failed to save OS version: {e}");
-        }
-        if let Err(e) = apk.run_silent(&["add", "remarkable-os"]) {
+
+        let pkg_version = format!("remarkable-os={os_cur}-r0");
+        if let Err(e) = apk.run_silent(&["add", &pkg_version]) {
             eprintln!("warning: failed to register remarkable-os package: {e}");
+        }
+
+        match apk.get_package_version("remarkable-os") {
+            Ok(Some(installed_ver)) if installed_ver == os_cur => {
+                if let Err(e) = state.set_os_version(&os_cur) {
+                    eprintln!("warning: failed to save OS version: {e}");
+                }
+            }
+            Ok(Some(installed_ver)) => {
+                eprintln!("warning: remarkable-os package is at {installed_ver}, expected {os_cur}");
+            }
+            Ok(None) => {
+                eprintln!("warning: remarkable-os package not found after installation");
+            }
+            Err(e) => {
+                eprintln!("warning: could not verify remarkable-os version: {e}");
+            }
         }
 
         AppState {

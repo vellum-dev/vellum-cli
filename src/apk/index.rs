@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use flate2::bufread::MultiGzDecoder;
 use tar::Archive;
 
-use super::version::{version_gte, version_lt};
+use super::version::{compare_versions, version_gte, version_lt};
 
 #[derive(Debug, Clone, Default)]
 pub struct Package {
@@ -71,6 +71,21 @@ pub fn fetch_remote_index(repo_url: &str, arch: &str) -> Result<Vec<Package>> {
     resp.into_reader().read_to_end(&mut data)?;
 
     parse_index_from_tar_gz(Cursor::new(data))
+}
+
+pub fn find_best_compatible_version<'a>(
+    pkg_name: &str,
+    os_version: &str,
+    index: &'a [Package],
+) -> Option<&'a Package> {
+    let mut compatible: Vec<&Package> = index
+        .iter()
+        .filter(|p| p.name == pkg_name && p.is_compatible_with_os(os_version))
+        .collect();
+
+    compatible.sort_by(|a, b| compare_versions(&b.version, &a.version));
+
+    compatible.first().copied()
 }
 
 fn parse_index_from_tar_gz<R: Read>(reader: R) -> Result<Vec<Package>> {

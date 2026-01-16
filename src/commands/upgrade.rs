@@ -4,7 +4,7 @@ use std::process;
 
 use crate::apk::{
     check_os_compatibility, generate_remarkable_os_package, fetch_remote_index,
-    parse_index_tar_gz, Apk, Package,
+    parse_index_tar_gz, version_lt, Apk, Package,
 };
 use crate::constants::{VELLUM_ROOT, VIRTUAL_PKGS};
 use crate::device::get_apk_arch;
@@ -30,8 +30,11 @@ pub fn handle_upgrade(
         }
     }
 
+    let is_downgrade = os_mismatch && version_lt(os_cur, os_prev);
+
     if os_mismatch {
-        println!("OS upgraded ({os_prev} -> {os_cur}). Checking package compatibility...");
+        let action = if is_downgrade { "downgraded" } else { "upgraded" };
+        println!("OS {action} ({os_prev} -> {os_cur}). Checking package compatibility...");
         println!();
 
         let incompatible = check_os_compatibility_internal(apk, os_cur);
@@ -69,17 +72,39 @@ pub fn handle_upgrade(
         if let Err(e) = update_index(&repo_dir, Some(&key_path)) {
             eprintln!("warning: failed to update local repo index: {e}");
         }
-        if let Err(e) = state.set_os_version(os_cur) {
-            eprintln!("warning: failed to save OS version: {e}");
-        }
-        if let Err(e) = apk.run_silent(&["add", "remarkable-os"]) {
+
+        let pkg_version = format!("remarkable-os={os_cur}-r0");
+        if let Err(e) = apk.run_silent(&["add", &pkg_version]) {
             eprintln!("warning: failed to register remarkable-os package: {e}");
+        }
+
+        match apk.get_package_version("remarkable-os") {
+            Ok(Some(installed_ver)) if installed_ver == os_cur => {
+                if let Err(e) = state.set_os_version(os_cur) {
+                    eprintln!("warning: failed to save OS version: {e}");
+                }
+            }
+            Ok(Some(installed_ver)) => {
+                eprintln!("error: remarkable-os package is at {installed_ver}, expected {os_cur}");
+                eprintln!("OS version sync failed. Run 'vellum upgrade' to retry.");
+                process::exit(1);
+            }
+            Ok(None) => {
+                eprintln!("error: remarkable-os package not found after installation");
+                process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("warning: could not verify remarkable-os version: {e}");
+            }
         }
 
         println!("Upgrading packages...");
     }
 
     let mut simulate_args = vec!["upgrade", "--simulate"];
+    if is_downgrade {
+        simulate_args.push("--available");
+    }
     simulate_args.extend(remaining_args.iter().map(|s| s.as_str()));
 
     let output = match apk.output(&simulate_args) {
@@ -129,6 +154,9 @@ pub fn handle_upgrade(
     }
 
     let mut upgrade_args = vec!["upgrade"];
+    if is_downgrade {
+        upgrade_args.push("--available");
+    }
     upgrade_args.extend(remaining_args.iter().map(|s| s.as_str()));
 
     if let Err(e) = apk.exec(&upgrade_args) {

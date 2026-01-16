@@ -4,6 +4,7 @@ use std::io::{self, BufRead, Write};
 use std::process;
 
 use crate::apk::Apk;
+use crate::constants::VIRTUAL_PKGS;
 
 pub fn handle_self_uninstall(apk: &Apk, vellum_root: &str, args: &[String]) {
     let mut uninstall_all = false;
@@ -42,6 +43,9 @@ pub fn handle_self_uninstall(apk: &Apk, vellum_root: &str, args: &[String]) {
         env::set_var("VELLUM_PURGE", "1");
         if let Ok(installed) = apk.list_installed() {
             for pkg in installed {
+                if pkg == "vellum" || VIRTUAL_PKGS.contains(&pkg.as_str()) {
+                    continue;
+                }
                 if let Err(e) = apk.run_silent(&["del", "--purge", "--preserve-env", &pkg]) {
                     eprintln!("warning: failed to remove {pkg}: {e}");
                 }

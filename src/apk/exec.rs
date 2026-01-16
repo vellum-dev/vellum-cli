@@ -106,6 +106,25 @@ impl Apk {
         Ok(out.lines().map(|s| s.to_string()).collect())
     }
 
+    pub fn get_package_version(&self, pkg: &str) -> Result<Option<String>> {
+        let out = self.output(&["list", "-I", pkg])?;
+        if out.is_empty() {
+            return Ok(None);
+        }
+        let first_field = out
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .unwrap_or("");
+        let prefix = format!("{}-", pkg);
+        if let Some(rest) = first_field.strip_prefix(&prefix) {
+            if let Some((ver, _)) = rest.rsplit_once("-r") {
+                return Ok(Some(ver.to_string()));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn cache_purge(&self) -> Result<()> {
         self.run_silent(&["cache", "purge"])
     }
