@@ -29,6 +29,7 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
     };
 
     let mut resolved_args: Vec<String> = Vec::new();
+    let mut resolved_packages: Vec<String> = Vec::new();
     let mut has_incompatible = false;
 
     for arg in args {
@@ -40,6 +41,7 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
         match find_best_compatible_version(arg, &os_version, &index) {
             Some(pkg) => {
                 resolved_args.push(format!("{}={}", pkg.name, pkg.version));
+                resolved_packages.push(pkg.name.clone());
             }
             None => {
                 let has_any_version = index.iter().any(|p| p.name == *arg);
@@ -65,6 +67,10 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
 
     if result.is_err() {
         process::exit(1);
+    }
+
+    if !resolved_packages.is_empty() {
+        clean_world_file_pins(&resolved_packages);
     }
 }
 
@@ -119,4 +125,27 @@ fn get_repo_url() -> Option<String> {
         }
     }
     None
+}
+
+fn clean_world_file_pins(packages: &[String]) {
+    let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
+    let content = match fs::read_to_string(&world_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let new_content: String = content
+        .lines()
+        .map(|line| {
+            for pkg in packages {
+                if line.starts_with(&format!("{pkg}=")) {
+                    return pkg.clone();
+                }
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let _ = fs::write(&world_path, new_content + "\n");
 }

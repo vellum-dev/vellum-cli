@@ -56,7 +56,7 @@ pub fn handle_upgrade(
             process::exit(1);
         }
 
-        println!("All packages have compatible versions. Syncing OS version...");
+        println!("All packages have compatible versions. Preparing upgrade...");
 
         let arch = get_apk_arch();
         let repo_dir = format!("{VELLUM_ROOT}/local-repo/{arch}");
@@ -73,32 +73,7 @@ pub fn handle_upgrade(
             eprintln!("warning: failed to update local repo index: {e}");
         }
 
-        let pkg_version = format!("remarkable-os={os_cur}-r0");
-        if let Err(e) = apk.run_silent(&["add", &pkg_version]) {
-            eprintln!("warning: failed to register remarkable-os package: {e}");
-        }
-
-        match apk.get_package_version("remarkable-os") {
-            Ok(Some(installed_ver)) if installed_ver == os_cur => {
-                if let Err(e) = state.set_os_version(os_cur) {
-                    eprintln!("warning: failed to save OS version: {e}");
-                }
-            }
-            Ok(Some(installed_ver)) => {
-                eprintln!("error: remarkable-os package is at {installed_ver}, expected {os_cur}");
-                eprintln!("OS version sync failed. Run 'vellum upgrade' to retry.");
-                process::exit(1);
-            }
-            Ok(None) => {
-                eprintln!("error: remarkable-os package not found after installation");
-                process::exit(1);
-            }
-            Err(e) => {
-                eprintln!("warning: could not verify remarkable-os version: {e}");
-            }
-        }
-
-        println!("Upgrading packages...");
+        clean_world_file_pins(apk);
     }
 
     let mut simulate_args = vec!["upgrade", "--simulate"];
@@ -130,6 +105,17 @@ pub fn handle_upgrade(
     }
 
     if packages.is_empty() {
+        if os_mismatch {
+            match apk.get_package_version("remarkable-os") {
+                Ok(Some(installed_ver)) if installed_ver == os_cur => {
+                    if let Err(e) = state.set_os_version(os_cur) {
+                        eprintln!("warning: failed to save OS version: {e}");
+                    }
+                    println!("OS version synced to {os_cur}");
+                }
+                _ => {}
+            }
+        }
         println!("No packages to upgrade.");
         return;
     }
@@ -159,9 +145,37 @@ pub fn handle_upgrade(
     }
     upgrade_args.extend(remaining_args.iter().map(|s| s.as_str()));
 
-    if let Err(e) = apk.exec(&upgrade_args) {
-        eprintln!("exec error: {e}");
-        process::exit(1);
+    if os_mismatch {
+        if let Err(e) = apk.run(&upgrade_args) {
+            eprintln!("upgrade error: {e}");
+            process::exit(1);
+        }
+
+        match apk.get_package_version("remarkable-os") {
+            Ok(Some(installed_ver)) if installed_ver == os_cur => {
+                if let Err(e) = state.set_os_version(os_cur) {
+                    eprintln!("warning: failed to save OS version: {e}");
+                }
+                println!("OS version synced to {os_cur}");
+            }
+            Ok(Some(installed_ver)) => {
+                eprintln!("error: remarkable-os package is at {installed_ver}, expected {os_cur}");
+                eprintln!("OS version sync failed. Run 'vellum upgrade' to retry.");
+                process::exit(1);
+            }
+            Ok(None) => {
+                eprintln!("error: remarkable-os package not found after upgrade");
+                process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("warning: could not verify remarkable-os version: {e}");
+            }
+        }
+    } else {
+        if let Err(e) = apk.exec(&upgrade_args) {
+            eprintln!("exec error: {e}");
+            process::exit(1);
+        }
     }
 }
 
@@ -241,5 +255,49 @@ fn get_repo_url() -> Option<String> {
         }
     }
     None
+}
+
+fn clean_world_file_pins(apk: &Apk) {
+    let installed = match apk.list_installed() {
+        Ok(list) => list,
+        Err(_) => return,
+    };
+
+    let packages_with_os_dep: Vec<String> = installed
+        .into_iter()
+        .filter(|p| !VIRTUAL_PKGS.contains(&p.as_str()))
+        .filter(|p| {
+            if let Ok(deps) = apk.get_dependencies(p) {
+                deps.iter().any(|d| d.contains("remarkable-os"))
+            } else {
+                false
+            }
+        })
+        .collect();
+
+    if packages_with_os_dep.is_empty() {
+        return;
+    }
+
+    let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
+    let content = match fs::read_to_string(&world_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let new_content: String = content
+        .lines()
+        .map(|line| {
+            for pkg in &packages_with_os_dep {
+                if line.starts_with(&format!("{pkg}=")) {
+                    return pkg.clone();
+                }
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let _ = fs::write(&world_path, new_content + "\n");
 }
 
