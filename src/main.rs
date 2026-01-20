@@ -52,6 +52,7 @@ fn main() {
         println!();
         println!("OS {action} ({} -> {}).", app_state.os_prev, app_state.os_cur);
         println!("Run 'vellum upgrade' to sync packages with new OS version.");
+        println!("Run 'vellum reenable' to restore packages that modify the system partition.");
         println!();
         process::exit(1);
     }
