@@ -6,14 +6,6 @@ use crate::constants::VELLUM_ROOT;
 use crate::device::get_apk_arch;
 
 pub fn handle_add(apk: &Apk, args: &[String]) {
-    for arg in args {
-        if arg == "vellum" {
-            eprintln!("Error: Cannot add/remove vellum package directly.");
-            eprintln!("Use 'vellum self uninstall' to remove vellum.");
-            process::exit(1);
-        }
-    }
-
     let os_version = match apk.get_package_version("remarkable-os") {
         Ok(Some(v)) => v,
         Ok(None) | Err(_) => {
