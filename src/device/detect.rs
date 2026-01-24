@@ -57,6 +57,6 @@ pub fn get_device_type() -> Option<String> {
     let machine = data.trim();
     DEVICE_PATTERNS
         .iter()
-        .find(|(pattern, _)| machine == *pattern)
+        .find(|(pattern, _)| machine.contains(pattern))
         .map(|(_, device)| device.to_string())
 }
