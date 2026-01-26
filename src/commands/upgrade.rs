@@ -74,6 +74,13 @@ pub fn handle_upgrade(
         }
 
         clean_world_file_pins(apk);
+
+        if is_downgrade {
+            let pkg_version = format!("remarkable-os={os_cur}-r0");
+            if let Err(e) = apk.run(&["add", &pkg_version]) {
+                eprintln!("warning: failed to downgrade remarkable-os package: {e}");
+            }
+        }
     }
 
     let mut simulate_args = vec!["upgrade", "--simulate"];
@@ -263,7 +270,7 @@ fn clean_world_file_pins(apk: &Apk) {
         Err(_) => return,
     };
 
-    let packages_with_os_dep: Vec<String> = installed
+    let mut packages_to_unpin: Vec<String> = installed
         .into_iter()
         .filter(|p| !VIRTUAL_PKGS.contains(&p.as_str()))
         .filter(|p| {
@@ -275,9 +282,7 @@ fn clean_world_file_pins(apk: &Apk) {
         })
         .collect();
 
-    if packages_with_os_dep.is_empty() {
-        return;
-    }
+    packages_to_unpin.push("remarkable-os".to_string());
 
     let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
     let content = match fs::read_to_string(&world_path) {
@@ -288,7 +293,7 @@ fn clean_world_file_pins(apk: &Apk) {
     let new_content: String = content
         .lines()
         .map(|line| {
-            for pkg in &packages_with_os_dep {
+            for pkg in &packages_to_unpin {
                 if line.starts_with(&format!("{pkg}=")) {
                     return pkg.clone();
                 }
