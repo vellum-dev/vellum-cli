@@ -99,7 +99,7 @@ if [ -n "$OFFLINE_DIR" ]; then
     cp "$OFFLINE_DIR/apk-$APK_ARCH" "$VELLUM_ROOT/bin/apk.vellum"
 else
     echo "Downloading apk.vellum..."
-    wget -q "$VELLUM_APK_RELEASES/apk-$APK_ARCH" -O "$VELLUM_ROOT/bin/apk.vellum"
+    wget -q --no-check-certificate "$VELLUM_APK_RELEASES/apk-$APK_ARCH" -O "$VELLUM_ROOT/bin/apk.vellum"
 fi
 case "$APK_ARCH" in
     aarch64) verify_sha256 "$VELLUM_ROOT/bin/apk.vellum" "$APK_AARCH64_SHA256" ;;
@@ -116,8 +116,8 @@ if [ -n "$OFFLINE_DIR" ]; then
 else
     echo "Downloading vellum..."
     case "$APK_ARCH" in
-        aarch64) wget -q "$VELLUM_CLI_RELEASES/vellum-linux-arm64" -O "$VELLUM_ROOT/bin/vellum" ;;
-        armv7)   wget -q "$VELLUM_CLI_RELEASES/vellum-linux-armv7" -O "$VELLUM_ROOT/bin/vellum" ;;
+        aarch64) wget -q --no-check-certificate "$VELLUM_CLI_RELEASES/vellum-linux-arm64" -O "$VELLUM_ROOT/bin/vellum" ;;
+        armv7)   wget -q --no-check-certificate "$VELLUM_CLI_RELEASES/vellum-linux-armv7" -O "$VELLUM_ROOT/bin/vellum" ;;
     esac
 fi
 case "$APK_ARCH" in
@@ -131,7 +131,7 @@ if [ -n "$OFFLINE_DIR" ]; then
     cp "$OFFLINE_DIR/packages.rsa.pub" "$VELLUM_ROOT/etc/apk/keys/packages.rsa.pub"
 else
     echo "Downloading signing key..."
-    wget -q "$VELLUM_PACKAGES_REPO/keys/packages.rsa.pub" -O "$VELLUM_ROOT/etc/apk/keys/packages.rsa.pub"
+    wget -q --no-check-certificate "$VELLUM_PACKAGES_REPO/keys/packages.rsa.pub" -O "$VELLUM_ROOT/etc/apk/keys/packages.rsa.pub"
 fi
 verify_sha256 "$VELLUM_ROOT/etc/apk/keys/packages.rsa.pub" "$SIGNING_KEY_SHA256"
 
