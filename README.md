@@ -44,10 +44,22 @@ After an OS upgrade, vellum detects the version change and requires `vellum upgr
 
 ## Building
 
+Requires [Rust](https://rustup.rs/) and [cross](https://github.com/cross-rs/cross) for cross-compilation.
+
 ```sh
-GOOS=linux GOARCH=arm64 go build -o vellum-arm64 ./cmd/vellum
-GOOS=linux GOARCH=arm go build -o vellum-armv7 ./cmd/vellum
+# Install cross
+cargo install cross --git https://github.com/cross-rs/cross
+
+# Build for arm64
+cross build --release --target aarch64-unknown-linux-musl
+
+# Build for armv7
+cross build --release --target armv7-unknown-linux-musleabihf
 ```
+
+Binaries will be in:
+- `target/aarch64-unknown-linux-musl/release/vellum` (arm64)
+- `target/armv7-unknown-linux-musleabihf/release/vellum` (armv7)
 
 ## Related repositories
 
