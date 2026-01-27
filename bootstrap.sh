@@ -192,15 +192,24 @@ fi
 
 BASHRC="/home/root/.bashrc"
 PATH_LINE="export PATH=\"$VELLUM_ROOT/bin:\$PATH\""
-COMPLETION_LINE="[ -f \"$VELLUM_ROOT/share/bash-completion/completions/vellum\" ] && . \"$VELLUM_ROOT/share/bash-completion/completions/vellum\""
+COMPLETION_LINE="for f in \"$VELLUM_ROOT/share/bash-completion/completions\"/*; do [ -f \"\$f\" ] && . \"\$f\"; done"
 
 if [ -f "$BASHRC" ] && grep -qF ".vellum/bin" "$BASHRC"; then
     echo "PATH already configured in $BASHRC"
 else
     echo "" >> "$BASHRC"
     echo "$PATH_LINE" >> "$BASHRC"
+    echo "Added vellum to PATH in $BASHRC"
+fi
+
+if [ -f "$BASHRC" ] && grep -qF 'bash-completion/completions"/*' "$BASHRC"; then
+    echo "Completions already configured in $BASHRC"
+elif [ -f "$BASHRC" ] && grep -qF 'bash-completion/completions/vellum"' "$BASHRC"; then
+    sed -i 's|.*bash-completion/completions/vellum".*|'"$COMPLETION_LINE"'|' "$BASHRC"
+    echo "Migrated completions to directory-based loading in $BASHRC"
+else
     echo "$COMPLETION_LINE" >> "$BASHRC"
-    echo "Added vellum to PATH and completions in $BASHRC"
+    echo "Added completions in $BASHRC"
 fi
 
 trap - EXIT
