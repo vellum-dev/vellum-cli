@@ -80,6 +80,7 @@ fn run_add_directly(apk: &Apk, args: &[String]) {
 
 fn get_index() -> anyhow::Result<Vec<Package>> {
     let cache_dir = format!("{VELLUM_ROOT}/etc/apk/cache");
+    let mut all_packages = Vec::new();
 
     if let Ok(entries) = fs::read_dir(&cache_dir) {
         for entry in entries.flatten() {
@@ -87,11 +88,17 @@ fn get_index() -> anyhow::Result<Vec<Package>> {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with("APKINDEX.") && name.ends_with(".tar.gz") {
                     if let Some(path_str) = path.to_str() {
-                        return parse_index_tar_gz(path_str);
+                        if let Ok(packages) = parse_index_tar_gz(path_str) {
+                            all_packages.extend(packages);
+                        }
                     }
                 }
             }
         }
+    }
+
+    if !all_packages.is_empty() {
+        return Ok(all_packages);
     }
 
     let repo_url = match get_repo_url() {

@@ -216,7 +216,7 @@ trap - EXIT
 
 echo ""
 echo "Vellum installed successfully!"
-echo "Run 'source ~/.bashrc' or start a new shell to use vellum."
+echo "Run 'exec bash --login' to use vellum."
 if [ -n "$OFFLINE_DIR" ]; then
     echo ""
     echo "Offline install complete. When network is available, run:"
