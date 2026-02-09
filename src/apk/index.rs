@@ -12,6 +12,7 @@ pub struct Package {
     pub name: String,
     pub version: String,
     pub depends: Vec<String>,
+    pub replaces: Vec<String>,
 }
 
 impl Package {
@@ -88,6 +89,55 @@ pub fn find_best_compatible_version<'a>(
     compatible.first().copied()
 }
 
+pub fn parse_apk_file(path: &str) -> Result<Package> {
+    let f = File::open(path)?;
+    let mut data = Vec::new();
+    BufReader::new(f).read_to_end(&mut data)?;
+
+    let gz = MultiGzDecoder::new(Cursor::new(data));
+    let mut archive = Archive::new(gz);
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let entry_path = entry.path()?;
+
+        if entry_path.to_string_lossy() == ".PKGINFO" {
+            let mut content = String::new();
+            entry.read_to_string(&mut content)?;
+            return parse_pkginfo(&content);
+        }
+    }
+
+    Err(anyhow!(".PKGINFO not found in package"))
+}
+
+fn parse_pkginfo(content: &str) -> Result<Package> {
+    let mut pkg = Package::default();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        if let Some((key, val)) = line.split_once(" = ") {
+            match key {
+                "pkgname" => pkg.name = val.to_string(),
+                "pkgver" => pkg.version = val.to_string(),
+                "depend" => pkg.depends.push(val.to_string()),
+                "replaces" => pkg.replaces.push(val.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    if pkg.name.is_empty() {
+        return Err(anyhow!("pkgname not found in .PKGINFO"));
+    }
+
+    Ok(pkg)
+}
+
 fn parse_index_from_tar_gz<R: Read>(reader: R) -> Result<Vec<Package>> {
     let mut data = Vec::new();
     let mut reader = reader;
@@ -140,6 +190,7 @@ fn parse_apkindex<R: BufRead>(reader: R) -> Result<Vec<Package>> {
             b'P' => current.name = val.to_string(),
             b'V' => current.version = val.to_string(),
             b'D' => current.depends = val.split_whitespace().map(|s| s.to_string()).collect(),
+            b'r' => current.replaces = val.split_whitespace().map(|s| s.to_string()).collect(),
             _ => {}
         }
     }
@@ -161,6 +212,7 @@ mod tests {
             name: name.to_string(),
             version: version.to_string(),
             depends: depends.into_iter().map(|s| s.to_string()).collect(),
+            replaces: Vec::new(),
         }
     }
 
@@ -327,5 +379,26 @@ mod tests {
         assert_eq!(packages[0].name, "test-pkg");
         assert_eq!(packages[0].version, "1.0.0");
         assert!(packages[0].depends.is_empty());
+    }
+
+    #[test]
+    fn parse_apkindex_replaces_field() {
+        let input = "P:new-pkg\nV:1.0.0\nr:old-pkg-a old-pkg-b\n";
+        let reader = BufReader::new(input.as_bytes());
+        let packages = parse_apkindex(reader).unwrap();
+
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "new-pkg");
+        assert_eq!(packages[0].replaces, vec!["old-pkg-a", "old-pkg-b"]);
+    }
+
+    #[test]
+    fn parse_apkindex_replaces_empty() {
+        let input = "P:test-pkg\nV:1.0.0\n";
+        let reader = BufReader::new(input.as_bytes());
+        let packages = parse_apkindex(reader).unwrap();
+
+        assert_eq!(packages.len(), 1);
+        assert!(packages[0].replaces.is_empty());
     }
 }

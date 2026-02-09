@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::process;
 
 use crate::apk::{
-    check_os_compatibility, generate_remarkable_os_package, fetch_remote_index,
-    parse_index_tar_gz, version_lt, Apk, Package,
+    check_os_compatibility, find_best_compatible_version, generate_remarkable_os_package,
+    fetch_remote_index, parse_index_tar_gz, version_lt, Apk, Package,
 };
 use crate::constants::{VELLUM_ROOT, VIRTUAL_PKGS};
 use crate::device::get_apk_arch;
@@ -83,6 +84,35 @@ pub fn handle_upgrade(
         }
     }
 
+    match find_replacement_packages(apk, os_cur) {
+        ReplacementResult::Conflict(conflicts) => {
+            eprintln!("Multiple packages want to replace the same installed package:");
+            for (old_pkg, candidates) in &conflicts {
+                eprintln!("  {old_pkg} can be replaced by: {}", candidates.join(", "));
+            }
+            eprintln!();
+            eprintln!("Please choose and install one manually:");
+            for (_, candidates) in &conflicts {
+                for candidate in candidates {
+                    eprintln!("  vellum add {candidate}");
+                }
+            }
+            process::exit(1);
+        }
+        ReplacementResult::Ok(replacements) if !replacements.is_empty() => {
+            println!("Package replacements available:");
+            for (new_pkg, old_pkg) in &replacements {
+                println!("  {old_pkg} -> {new_pkg}");
+            }
+            println!();
+
+            for (new_pkg, _) in &replacements {
+                remaining_args.push(new_pkg.clone());
+            }
+        }
+        ReplacementResult::Ok(_) => {}
+    }
+
     let mut simulate_args = vec!["upgrade", "--simulate"];
     if is_downgrade {
         simulate_args.push("--available");
@@ -99,19 +129,23 @@ pub fn handle_upgrade(
 
     let mut packages = Vec::new();
     for line in output.lines() {
-        if line.contains("Upgrading") {
-            if let Some(rest) = line.split("Upgrading ").nth(1) {
-                if let Some(pkg_name) = rest.split(" (").next() {
-                    let pkg_name = pkg_name.trim();
-                    if !pkg_name.is_empty() {
-                        packages.push(pkg_name.to_string());
+        for action in ["Upgrading ", "Installing "] {
+            if line.contains(action) {
+                if let Some(rest) = line.split(action).nth(1) {
+                    if let Some(pkg_name) = rest.split(" (").next() {
+                        let pkg_name = pkg_name.trim();
+                        if !pkg_name.is_empty() && !packages.contains(&pkg_name.to_string()) {
+                            packages.push(pkg_name.to_string());
+                        }
                     }
                 }
             }
         }
     }
 
-    if packages.is_empty() {
+    let packages_to_replace = find_packages_to_replace(apk, &packages, os_cur);
+
+    if packages.is_empty() && packages_to_replace.is_empty() {
         if os_mismatch {
             match apk.get_package_version("remarkable-os") {
                 Ok(Some(installed_ver)) if installed_ver == os_cur => {
@@ -132,6 +166,12 @@ pub fn handle_upgrade(
         for pkg in &packages {
             println!("  - {pkg}");
         }
+        if !packages_to_replace.is_empty() {
+            println!("\nThe following {} package(s) will be removed (replaced):", packages_to_replace.len());
+            for pkg in &packages_to_replace {
+                println!("  - {pkg}");
+            }
+        }
         print!("\nProceed with upgrade? [y/N] ");
         let _ = io::stdout().flush();
 
@@ -143,6 +183,16 @@ pub fn handle_upgrade(
         if confirm != "y" && confirm != "yes" {
             println!("Upgrade aborted.");
             process::exit(1);
+        }
+    }
+
+    if !packages_to_replace.is_empty() {
+        println!("Removing replaced packages...");
+        let del_args: Vec<&str> = packages_to_replace.iter().map(|s| s.as_str()).collect();
+        let mut del_cmd = vec!["del"];
+        del_cmd.extend(del_args);
+        if let Err(e) = apk.run(&del_cmd) {
+            eprintln!("warning: failed to remove replaced packages: {e}");
         }
     }
 
@@ -311,5 +361,81 @@ fn clean_world_file_pins(apk: &Apk) {
         .join("\n");
 
     let _ = fs::write(&world_path, new_content + "\n");
+}
+
+fn find_packages_to_replace(apk: &Apk, upgrading_packages: &[String], os_version: &str) -> Vec<String> {
+    let index = match get_index() {
+        Ok(idx) => idx,
+        Err(_) => return Vec::new(),
+    };
+
+    let installed = match apk.list_installed() {
+        Ok(list) => list,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut to_replace = Vec::new();
+
+    for pkg_name in upgrading_packages {
+        if let Some(pkg) = find_best_compatible_version(pkg_name, os_version, &index) {
+            for replaced in &pkg.replaces {
+                if installed.contains(replaced) && !to_replace.contains(replaced) {
+                    to_replace.push(replaced.clone());
+                }
+            }
+        }
+    }
+
+    to_replace
+}
+
+enum ReplacementResult {
+    Ok(Vec<(String, String)>),
+    Conflict(Vec<(String, Vec<String>)>),
+}
+
+fn find_replacement_packages(apk: &Apk, os_version: &str) -> ReplacementResult {
+    let index = match get_index() {
+        Ok(idx) => idx,
+        Err(_) => return ReplacementResult::Ok(Vec::new()),
+    };
+
+    let installed = match apk.list_installed() {
+        Ok(list) => list,
+        Err(_) => return ReplacementResult::Ok(Vec::new()),
+    };
+
+    let mut replacements_map: HashMap<String, Vec<String>> = HashMap::new();
+
+    for pkg in &index {
+        if !pkg.is_compatible_with_os(os_version) {
+            continue;
+        }
+        for replaced in &pkg.replaces {
+            if installed.contains(replaced) {
+                replacements_map
+                    .entry(replaced.clone())
+                    .or_default()
+                    .push(pkg.name.clone());
+            }
+        }
+    }
+
+    let conflicts: Vec<_> = replacements_map
+        .iter()
+        .filter(|(_, replacers)| replacers.len() > 1)
+        .map(|(old, replacers)| (old.clone(), replacers.clone()))
+        .collect();
+
+    if !conflicts.is_empty() {
+        return ReplacementResult::Conflict(conflicts);
+    }
+
+    let result = replacements_map
+        .into_iter()
+        .map(|(old, mut replacers)| (replacers.remove(0), old))
+        .collect();
+
+    ReplacementResult::Ok(result)
 }
 

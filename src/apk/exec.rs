@@ -128,4 +128,14 @@ impl Apk {
     pub fn cache_purge(&self) -> Result<()> {
         self.run_silent(&["cache", "purge"])
     }
+
+    pub fn fetch(&self, packages: &[&str]) -> Result<()> {
+        let mut args = vec!["fetch", "--cache"];
+        args.extend(packages);
+        self.run_silent(&args)
+    }
+
+    pub fn cache_dir(&self) -> PathBuf {
+        self.root.join("etc").join("apk").join("cache")
+    }
 }

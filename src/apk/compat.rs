@@ -56,6 +56,7 @@ mod tests {
             name: name.to_string(),
             version: version.to_string(),
             depends: depends.into_iter().map(|s| s.to_string()).collect(),
+            replaces: Vec::new(),
         }
     }
 
