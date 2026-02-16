@@ -1,8 +1,29 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::process::{self, Command};
 
 use crate::constants::VELLUM_ROOT;
+
+pub fn handle_reenable_status() {
+    if !has_hooks() {
+        println!("unneeded");
+        process::exit(0);
+    }
+    if Path::new("/etc/vellum/reenabled").exists() {
+        println!("ok");
+        process::exit(0);
+    }
+    println!("needed");
+    process::exit(1);
+}
+
+fn has_hooks() -> bool {
+    let hooks_dir = format!("{VELLUM_ROOT}/hooks/post-os-upgrade");
+    fs::read_dir(&hooks_dir)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
+}
 
 pub fn handle_reenable() {
     let hooks_dir = format!("{VELLUM_ROOT}/hooks/post-os-upgrade");
@@ -54,6 +75,13 @@ pub fn handle_reenable() {
                 println!("    warning: {name} reenable script failed");
             }
         }
+    }
+
+    let marker_dir = "/etc/vellum";
+    if let Err(e) = fs::create_dir_all(marker_dir) {
+        eprintln!("warning: failed to create {marker_dir}: {e}");
+    } else if let Err(e) = fs::write(format!("{marker_dir}/reenabled"), "") {
+        eprintln!("warning: failed to write reenable marker: {e}");
     }
 
     if run_command(&mount_restore).is_err() {

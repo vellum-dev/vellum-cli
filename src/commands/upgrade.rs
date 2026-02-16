@@ -171,7 +171,7 @@ pub fn handle_upgrade(
                 println!("  - {pkg}");
             }
         }
-        print!("\nProceed with upgrade? [y/N] ");
+        print!("\nProceed with upgrade? [Y/n] ");
         let _ = io::stdout().flush();
 
         let stdin = io::stdin();
@@ -179,7 +179,7 @@ pub fn handle_upgrade(
         let _ = stdin.lock().read_line(&mut line);
         let confirm = line.trim().to_lowercase();
 
-        if confirm != "y" && confirm != "yes" {
+        if confirm == "n" || confirm == "no" {
             println!("Upgrade aborted.");
             process::exit(1);
         }

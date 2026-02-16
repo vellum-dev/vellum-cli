@@ -14,7 +14,7 @@ use std::process;
 use apk::{generate_device_package, generate_remarkable_os_package, version_lt, Apk};
 use commands::{
     handle_add, handle_check_os, handle_del, handle_purge, handle_reenable,
-    handle_self_uninstall, handle_testing, handle_upgrade,
+    handle_reenable_status, handle_self_uninstall, handle_testing, handle_upgrade,
 };
 use constants::VELLUM_ROOT;
 use device::{get_apk_arch, get_device_type, get_os_version};
@@ -38,13 +38,16 @@ fn main() {
     ensure_device_package(&state, &apk);
 
     let args: Vec<String> = env::args().collect();
+    let cmd = args.get(1).map(|s| s.as_str());
 
-    if args.len() < 2 {
-        show_help(&apk);
-        return;
+    if cmd != Some("reenable") {
+        warn_if_reenable_needed();
     }
 
-    let cmd = &args[1];
+    let Some(cmd) = cmd else {
+        show_help(&apk);
+        return;
+    };
 
     if app_state.os_mismatch && !is_allowed_during_mismatch(cmd) {
         let is_downgrade = version_lt(&app_state.os_cur, &app_state.os_prev);
@@ -57,7 +60,7 @@ fn main() {
         process::exit(1);
     }
 
-    match cmd.as_str() {
+    match cmd {
         "--help" | "-h" => show_help(&apk),
         "--version" | "-V" | "version" => println!("vellum {VERSION}"),
         "install" => handle_add(&apk, &args[2..]),
@@ -74,7 +77,13 @@ fn main() {
             &app_state.os_prev,
             &app_state.os_cur,
         ),
-        "reenable" => handle_reenable(),
+        "reenable" => {
+            if args.len() > 2 && args[2] == "status" {
+                handle_reenable_status();
+            } else {
+                handle_reenable();
+            }
+        }
         "check-os" => {
             if args.len() < 3 {
                 eprintln!("Usage: vellum check-os <version>");
@@ -232,6 +241,20 @@ Aliases:
 "#
     );
     let _ = apk.run(&["--help"]);
+}
+
+fn warn_if_reenable_needed() {
+    if Path::new("/etc/vellum/reenabled").exists() {
+        return;
+    }
+    let hooks_dir = format!("{VELLUM_ROOT}/hooks/post-os-upgrade");
+    let has_hooks = fs::read_dir(&hooks_dir)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false);
+    if has_hooks {
+        eprintln!("warning: reenable has not been run since last OS upgrade");
+        eprintln!("  Run 'vellum reenable' to restore packages that modify the system partition.");
+    }
 }
 
 fn handle_show(apk: &Apk, args: &[String]) {
