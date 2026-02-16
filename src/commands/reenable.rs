@@ -71,7 +71,18 @@ pub fn handle_reenable() {
         println!("  {name}");
 
         if let Some(path_str) = path.to_str() {
-            if run_command(path_str).is_err() {
+            let result = Command::new(path_str)
+                .env("VELLUM_REENABLE", "1")
+                .status()
+                .map_err(anyhow::Error::from)
+                .and_then(|s| {
+                    if s.success() {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!("command failed"))
+                    }
+                });
+            if result.is_err() {
                 println!("    warning: {name} reenable script failed");
             }
         }
