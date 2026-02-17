@@ -62,7 +62,10 @@ pub fn parse_index_tar_gz(path: &str) -> Result<Vec<Package>> {
 pub fn fetch_remote_index(repo_url: &str, arch: &str) -> Result<Vec<Package>> {
     let url = format!("{}/{}/APKINDEX.tar.gz", repo_url.trim_end_matches('/'), arch);
 
-    let resp = ureq::get(&url).call().map_err(|e| anyhow!("HTTP request failed: {e}"))?;
+    let resp = ureq::get(&url)
+        .set("User-Agent", &format!("vellum-cli/{}", env!("VELLUM_VERSION")))
+        .call()
+        .map_err(|e| anyhow!("HTTP request failed: {e}"))?;
 
     if resp.status() != 200 {
         return Err(anyhow!("HTTP {}", resp.status()));

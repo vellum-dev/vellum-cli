@@ -31,6 +31,8 @@ struct AppState {
 }
 
 fn main() {
+    unsafe { env::set_var("HTTP_USER_AGENT", format!("vellum-cli/{VERSION}")); }
+
     let state = State::new(VELLUM_ROOT);
     let apk = Apk::new(VELLUM_ROOT);
 
