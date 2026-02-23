@@ -34,7 +34,16 @@ vellum check-os 3.24.0.149
 
 After an OS upgrade, vellum detects the version change and requires `vellum upgrade` to sync packages.
 
-## How it works
+## Where To Get Help
+
+- **Package-related issues or package requests** should be submitted to the
+  [Vellum package repository](https://github.com/vellum-dev/vellum).
+- **Issues with the software being packaged** should be submitted to the relevant upstream
+  projects, which are linked in the package index.
+- **Issues with the Vellum cli itself** should be opened in this repository.
+- **For general questions or help**, join the [community Discord](https://discord.gg/u3P9sDW) where many helpful and knowledgeable people, including mod developers, are active.
+
+## How It Works
 
 - Keeps all package manager state in `/home/root/.vellum/`
 - Generates virtual packages for device detection (`rmpp`, `rm2`, etc.) and OS version (`remarkable-os`)
