@@ -22,11 +22,13 @@ pub fn handle_upgrade(
     os_cur: &str,
 ) {
     let mut upgrade_yes = false;
+    let mut simulate = false;
     let mut remaining_args = Vec::new();
 
     for arg in args {
         match arg.as_str() {
             "-y" | "--yes" => upgrade_yes = true,
+            "--simulate" => simulate = true,
             _ => remaining_args.push(arg.clone()),
         }
     }
@@ -145,7 +147,7 @@ pub fn handle_upgrade(
     let packages_to_replace = find_packages_to_replace(apk, &packages, os_cur);
 
     if packages.is_empty() && packages_to_replace.is_empty() {
-        if os_mismatch {
+        if os_mismatch && !simulate {
             match apk.get_package_version("remarkable-os") {
                 Ok(Some(installed_ver)) if installed_ver == os_cur => {
                     if let Err(e) = state.set_os_version(os_cur) {
