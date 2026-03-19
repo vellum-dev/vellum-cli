@@ -1,5 +1,5 @@
 use std::fs;
-use std::process;
+use std::process::{self, Command};
 
 use crate::apk::{
     fetch_remote_index, find_best_compatible_version, parse_apk_file, parse_index_tar_gz, Apk,
@@ -91,15 +91,7 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
         }
     }
 
-    let mut cmd_args = vec!["add", "--cache-predownload"];
-    cmd_args.extend(resolved_args.iter().map(|s| s.as_str()));
-
-    let result = apk.run(&cmd_args);
-    let _ = apk.cache_purge();
-
-    if result.is_err() {
-        process::exit(1);
-    }
+    run_apk_add(apk, &resolved_args.iter().map(|s| s.as_str()).collect::<Vec<_>>());
 
     if !resolved_packages.is_empty() {
         clean_world_file_pins(&resolved_packages);
@@ -107,14 +99,24 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
 }
 
 fn run_add_directly(apk: &Apk, args: &[String]) {
+    run_apk_add(apk, &args.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+}
+
+fn run_apk_add(apk: &Apk, args: &[&str]) {
+    let had_hooks_before = has_post_os_upgrade_hooks();
+
     let mut cmd_args = vec!["add", "--cache-predownload"];
-    cmd_args.extend(args.iter().map(|s| s.as_str()));
+    cmd_args.extend(args);
 
     let result = apk.run(&cmd_args);
     let _ = apk.cache_purge();
 
     if result.is_err() {
         process::exit(1);
+    }
+
+    if !had_hooks_before && has_post_os_upgrade_hooks() {
+        touch_reenable_marker();
     }
 }
 
@@ -255,3 +257,33 @@ fn find_cached_apk_packages(apk: &Apk, package_specs: &[String]) -> Vec<Package>
     packages
 }
 
+fn has_post_os_upgrade_hooks() -> bool {
+    let hooks_dir = format!("{VELLUM_ROOT}/hooks/post-os-upgrade");
+    fs::read_dir(&hooks_dir)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
+}
+
+fn touch_reenable_marker() {
+    let mount_rw = format!("{VELLUM_ROOT}/bin/mount-rw");
+    let mount_restore = format!("{VELLUM_ROOT}/bin/mount-restore");
+
+    if run_command(&mount_rw).is_err() {
+        return;
+    }
+
+    let marker_dir = "/etc/vellum";
+    let _ = fs::create_dir_all(marker_dir);
+    let _ = fs::write(format!("{marker_dir}/reenabled"), "");
+
+    let _ = run_command(&mount_restore);
+}
+
+fn run_command(path: &str) -> anyhow::Result<()> {
+    let status = Command::new(path).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("command failed"))
+    }
+}

@@ -162,6 +162,10 @@ pub fn handle_upgrade(
         return;
     }
 
+    if simulate {
+        return;
+    }
+
     if !upgrade_yes {
         println!("The following {} package(s) will be upgraded:", packages.len());
         for pkg in &packages {
