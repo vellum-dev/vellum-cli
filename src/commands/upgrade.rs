@@ -5,13 +5,13 @@ use std::process;
 
 use crate::apk::{
     check_os_compatibility, find_best_compatible_version, generate_remarkable_os_package,
-    fetch_remote_index, parse_index_tar_gz, version_lt, Apk, Package,
+    fetch_remote_index, parse_index_tar_gz, resolve_compatible_deps, version_lt, Apk, Package,
 };
 use crate::constants::{VELLUM_ROOT, VIRTUAL_PKGS};
 use crate::device::get_apk_arch;
 use crate::repo::update_index;
 use crate::state::State;
-use crate::util::remove_glob;
+use crate::util::{remove_glob, remove_world_file_entries, strip_world_file_pins};
 
 pub fn handle_upgrade(
     state: &State,
@@ -35,19 +35,23 @@ pub fn handle_upgrade(
 
     let is_downgrade = os_mismatch && version_lt(os_cur, os_prev);
 
+    let index = match get_index() {
+        Ok(idx) => Some(idx),
+        Err(_) if os_mismatch => {
+            eprintln!("Could not fetch package index to verify compatibility.");
+            eprintln!("Check your network connection and try again.");
+            process::exit(1);
+        }
+        Err(_) => None,
+    };
+
     if os_mismatch {
         let action = if is_downgrade { "downgraded" } else { "upgraded" };
         println!("OS {action} ({os_prev} -> {os_cur}). Checking package compatibility...");
         println!();
 
-        let incompatible = check_os_compatibility_internal(apk, os_cur);
-        if incompatible.is_none() {
-            eprintln!("Could not fetch package index to verify compatibility.");
-            eprintln!("Check your network connection and try again.");
-            process::exit(1);
-        }
+        let incompatible = check_os_compatibility_internal(apk, os_cur, index.as_deref().unwrap());
 
-        let incompatible = incompatible.unwrap();
         if !incompatible.is_empty() {
             println!("These packages have no version compatible with OS {os_cur}:");
             for pkg in &incompatible {
@@ -85,7 +89,7 @@ pub fn handle_upgrade(
         }
     }
 
-    match find_replacement_packages(apk, os_cur) {
+    match find_replacement_packages(apk, os_cur, index.as_deref()) {
         ReplacementResult::Conflict(conflicts) => {
             eprintln!("Multiple packages want to replace the same installed package:");
             for (old_pkg, candidates) in &conflicts {
@@ -144,7 +148,7 @@ pub fn handle_upgrade(
         }
     }
 
-    let packages_to_replace = find_packages_to_replace(apk, &packages, os_cur);
+    let packages_to_replace = find_packages_to_replace(apk, &packages, os_cur, index.as_deref());
 
     if packages.is_empty() && packages_to_replace.is_empty() {
         if os_mismatch && !simulate {
@@ -201,6 +205,17 @@ pub fn handle_upgrade(
         }
     }
 
+    let pin_result = pin_upgrade_packages(&packages, os_cur, index.as_deref());
+    let all_pins: Vec<&str> = pin_result.direct.iter().chain(&pin_result.transitive).map(|s| s.as_str()).collect();
+
+    if !all_pins.is_empty() {
+        let mut add_args: Vec<&str> = vec!["add"];
+        add_args.extend(&all_pins);
+        if let Err(e) = apk.run(&add_args) {
+            eprintln!("warning: failed to pin OS-compatible versions: {e}");
+        }
+    }
+
     let mut upgrade_args = vec!["upgrade"];
     if is_downgrade {
         upgrade_args.push("--available");
@@ -239,12 +254,68 @@ pub fn handle_upgrade(
             process::exit(1);
         }
     }
+
+    if !pin_result.direct.is_empty() {
+        let pkg_names: Vec<String> = pin_result.direct
+            .iter()
+            .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
+            .collect();
+        strip_world_file_pins(&pkg_names);
+    }
+    if !pin_result.transitive.is_empty() {
+        let pkg_names: Vec<String> = pin_result.transitive
+            .iter()
+            .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
+            .collect();
+        remove_world_file_entries(&pkg_names);
+    }
 }
 
-fn check_os_compatibility_internal(apk: &Apk, target_os: &str) -> Option<Vec<String>> {
+struct PinResult {
+    direct: Vec<String>,
+    transitive: Vec<String>,
+}
+
+fn pin_upgrade_packages(packages: &[String], os_version: &str, index: Option<&[Package]>) -> PinResult {
+    let index = match index {
+        Some(idx) => idx,
+        None => return PinResult { direct: Vec::new(), transitive: Vec::new() },
+    };
+
+    let mut direct = Vec::new();
+    let mut resolved_pkgs = Vec::new();
+
+    for pkg_name in packages {
+        if pkg_name == "remarkable-os" || VIRTUAL_PKGS.contains(&pkg_name.as_str()) {
+            continue;
+        }
+        let has_os_constrained = index
+            .iter()
+            .any(|p| p.name == *pkg_name && p.get_os_constraints() != (None, None));
+        if !has_os_constrained {
+            continue;
+        }
+        if let Some(best) = find_best_compatible_version(pkg_name, os_version, index) {
+            direct.push(format!("{}={}", best.name, best.version));
+            resolved_pkgs.push(best);
+        }
+    }
+
+    let mut transitive = Vec::new();
+    for pin in resolve_compatible_deps(&resolved_pkgs, os_version, index) {
+        let name = pin.split('=').next().unwrap_or(&pin);
+        if !direct.iter().any(|p| p.starts_with(&format!("{name}="))) {
+            transitive.push(pin);
+        }
+    }
+
+    PinResult { direct, transitive }
+}
+
+fn check_os_compatibility_internal(apk: &Apk, target_os: &str, index: &[Package]) -> Vec<String> {
     let installed = match apk.list_installed() {
         Ok(list) => list,
-        Err(_) => return None,
+        Err(_) => return Vec::new(),
     };
 
     let filtered: Vec<String> = installed
@@ -253,13 +324,8 @@ fn check_os_compatibility_internal(apk: &Apk, target_os: &str) -> Option<Vec<Str
         .collect();
 
     if filtered.is_empty() {
-        return Some(Vec::new());
+        return Vec::new();
     }
-
-    let index = match get_index() {
-        Ok(idx) => idx,
-        Err(_) => return None,
-    };
 
     let mut installed_with_os_dep = Vec::new();
     for pkg in &filtered {
@@ -271,11 +337,11 @@ fn check_os_compatibility_internal(apk: &Apk, target_os: &str) -> Option<Vec<Str
     }
 
     if installed_with_os_dep.is_empty() {
-        return Some(Vec::new());
+        return Vec::new();
     }
 
-    let result = check_os_compatibility(target_os, &installed_with_os_dep, &index);
-    Some(result.incompatible)
+    let result = check_os_compatibility(target_os, &installed_with_os_dep, index);
+    result.incompatible
 }
 
 fn get_index() -> anyhow::Result<Vec<Package>> {
@@ -368,10 +434,10 @@ fn clean_world_file_pins(apk: &Apk) {
     let _ = fs::write(&world_path, new_content + "\n");
 }
 
-fn find_packages_to_replace(apk: &Apk, upgrading_packages: &[String], os_version: &str) -> Vec<String> {
-    let index = match get_index() {
-        Ok(idx) => idx,
-        Err(_) => return Vec::new(),
+fn find_packages_to_replace(apk: &Apk, upgrading_packages: &[String], os_version: &str, index: Option<&[Package]>) -> Vec<String> {
+    let index = match index {
+        Some(idx) => idx,
+        None => return Vec::new(),
     };
 
     let installed = match apk.list_installed() {
@@ -382,7 +448,7 @@ fn find_packages_to_replace(apk: &Apk, upgrading_packages: &[String], os_version
     let mut to_replace = Vec::new();
 
     for pkg_name in upgrading_packages {
-        if let Some(pkg) = find_best_compatible_version(pkg_name, os_version, &index) {
+        if let Some(pkg) = find_best_compatible_version(pkg_name, os_version, index) {
             for replaced in &pkg.replaces {
                 if installed.contains(replaced) && !to_replace.contains(replaced) {
                     to_replace.push(replaced.clone());
@@ -399,10 +465,10 @@ enum ReplacementResult {
     Conflict(Vec<(String, Vec<String>)>),
 }
 
-fn find_replacement_packages(apk: &Apk, os_version: &str) -> ReplacementResult {
-    let index = match get_index() {
-        Ok(idx) => idx,
-        Err(_) => return ReplacementResult::Ok(Vec::new()),
+fn find_replacement_packages(apk: &Apk, os_version: &str, index: Option<&[Package]>) -> ReplacementResult {
+    let index = match index {
+        Some(idx) => idx,
+        None => return ReplacementResult::Ok(Vec::new()),
     };
 
     let installed = match apk.list_installed() {
@@ -412,7 +478,7 @@ fn find_replacement_packages(apk: &Apk, os_version: &str) -> ReplacementResult {
 
     let mut replacements_map: HashMap<String, Vec<String>> = HashMap::new();
 
-    for pkg in &index {
+    for pkg in index {
         if !pkg.is_compatible_with_os(os_version) {
             continue;
         }

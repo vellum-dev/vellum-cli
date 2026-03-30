@@ -92,6 +92,67 @@ pub fn find_best_compatible_version<'a>(
     compatible.first().copied()
 }
 
+pub fn resolve_compatible_deps(
+    packages: &[&Package],
+    os_version: &str,
+    index: &[Package],
+) -> Vec<String> {
+    let mut pinned: Vec<String> = Vec::new();
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+
+    for pkg in packages {
+        visited.insert(pkg.name.clone());
+        for dep in &pkg.depends {
+            let name = dep_name(dep);
+            if !name.is_empty() && !name.starts_with('/') && name != "remarkable-os" {
+                if visited.insert(name.to_string()) {
+                    queue.push_back(name.to_string());
+                }
+            }
+        }
+    }
+
+    while let Some(name) = queue.pop_front() {
+        let has_os_constrained = index
+            .iter()
+            .any(|p| p.name == name && p.get_os_constraints() != (None, None));
+
+        let best = if has_os_constrained {
+            find_best_compatible_version(&name, os_version, index)
+        } else {
+            let mut candidates: Vec<&Package> = index.iter().filter(|p| p.name == name).collect();
+            candidates.sort_by(|a, b| compare_versions(&b.version, &a.version));
+            candidates.first().copied()
+        };
+
+        if let Some(pkg) = best {
+            if has_os_constrained {
+                pinned.push(format!("{}={}", pkg.name, pkg.version));
+            }
+            for dep in &pkg.depends {
+                let dep_name = dep_name(dep);
+                if !dep_name.is_empty() && !dep_name.starts_with('/') && dep_name != "remarkable-os"
+                {
+                    if visited.insert(dep_name.to_string()) {
+                        queue.push_back(dep_name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    pinned
+}
+
+fn dep_name(dep: &str) -> &str {
+    if let Some(idx) = dep.find(|c: char| c == '>' || c == '<' || c == '=' || c == '!' || c == '~') {
+        &dep[..idx]
+    } else {
+        dep
+    }
+}
+
 pub fn parse_apk_file(path: &str) -> Result<Package> {
     let f = File::open(path)?;
     let mut data = Vec::new();
@@ -403,5 +464,47 @@ mod tests {
 
         assert_eq!(packages.len(), 1);
         assert!(packages[0].replaces.is_empty());
+    }
+
+    #[test]
+    fn dep_name_strips_version_operators() {
+        assert_eq!(dep_name("foo>=1.0"), "foo");
+        assert_eq!(dep_name("bar<2.0"), "bar");
+        assert_eq!(dep_name("baz=1.0"), "baz");
+        assert_eq!(dep_name("qux!1.0"), "qux");
+        assert_eq!(dep_name("tilde~1.0"), "tilde");
+        assert_eq!(dep_name("plain"), "plain");
+        assert_eq!(dep_name(""), "");
+    }
+
+    #[test]
+    fn resolve_compatible_deps_walks_through_unconstrained() {
+        let index = vec![
+            make_package("A", "1.0", vec!["B"]),
+            make_package("B", "1.0", vec!["C>=1.0"]),
+            make_package("C", "2.0", vec!["remarkable-os>=3.10.0.0", "remarkable-os<4.0.0.0"]),
+            make_package("C", "1.0", vec!["remarkable-os>=3.0.0.0", "remarkable-os<3.10.0.0"]),
+        ];
+
+        let a = &index[0];
+        let result = resolve_compatible_deps(&[a], "3.5.0.0", &index);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "C=1.0");
+    }
+
+    #[test]
+    fn resolve_compatible_deps_no_duplicates() {
+        let index = vec![
+            make_package("A", "1.0", vec!["B", "C"]),
+            make_package("B", "1.0", vec!["C"]),
+            make_package("C", "1.0", vec!["remarkable-os>=3.0.0.0"]),
+        ];
+
+        let a = &index[0];
+        let result = resolve_compatible_deps(&[a], "3.5.0.0", &index);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "C=1.0");
     }
 }

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use crate::constants::VELLUM_ROOT;
+
 pub fn remove_glob(pattern: &str) {
     let dir = Path::new(pattern).parent().unwrap_or(Path::new("."));
     let file_pattern = Path::new(pattern)
@@ -17,6 +19,49 @@ pub fn remove_glob(pattern: &str) {
             }
         }
     }
+}
+
+pub fn strip_world_file_pins(packages: &[String]) {
+    let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
+    let content = match fs::read_to_string(&world_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let new_content: String = content
+        .lines()
+        .map(|line| {
+            for pkg in packages {
+                if line.starts_with(&format!("{pkg}=")) {
+                    return pkg.clone();
+                }
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let _ = fs::write(&world_path, new_content + "\n");
+}
+
+pub fn remove_world_file_entries(packages: &[String]) {
+    let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
+    let content = match fs::read_to_string(&world_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let new_content: String = content
+        .lines()
+        .filter(|line| {
+            !packages.iter().any(|pkg| {
+                *line == *pkg || line.starts_with(&format!("{pkg}="))
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let _ = fs::write(&world_path, new_content + "\n");
 }
 
 pub fn matches_glob(name: &str, pattern: &str) -> bool {

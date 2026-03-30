@@ -2,11 +2,12 @@ use std::fs;
 use std::process::{self, Command};
 
 use crate::apk::{
-    fetch_remote_index, find_best_compatible_version, parse_apk_file, parse_index_tar_gz, Apk,
-    Package,
+    fetch_remote_index, find_best_compatible_version, parse_apk_file, parse_index_tar_gz,
+    resolve_compatible_deps, Apk, Package,
 };
 use crate::constants::VELLUM_ROOT;
 use crate::device::get_apk_arch;
+use crate::util::{remove_world_file_entries, strip_world_file_pins};
 
 pub fn handle_add(apk: &Apk, args: &[String]) {
     let os_version = match apk.get_package_version("remarkable-os") {
@@ -25,6 +26,7 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
 
     let mut resolved_args: Vec<String> = Vec::new();
     let mut resolved_packages: Vec<String> = Vec::new();
+    let mut resolved_pkgs: Vec<&Package> = Vec::new();
     let mut local_apk_packages: Vec<Package> = Vec::new();
     let mut has_incompatible = false;
 
@@ -46,6 +48,7 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
             Some(pkg) => {
                 resolved_args.push(format!("{}={}", pkg.name, pkg.version));
                 resolved_packages.push(pkg.name.clone());
+                resolved_pkgs.push(pkg);
             }
             None => {
                 let has_any_version = index.iter().any(|p| p.name == *arg);
@@ -61,6 +64,16 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
 
     if has_incompatible {
         process::exit(1);
+    }
+
+    let transitive_pins = resolve_compatible_deps(&resolved_pkgs, &os_version, &index);
+    let mut transitive_names: Vec<String> = Vec::new();
+    for pin in &transitive_pins {
+        let name = pin.split('=').next().unwrap_or(pin);
+        if !resolved_packages.iter().any(|r| r == name) {
+            resolved_args.push(pin.clone());
+            transitive_names.push(name.to_string());
+        }
     }
 
     let fetch_args: Vec<&str> = resolved_args
@@ -94,7 +107,10 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
     run_apk_add(apk, &resolved_args.iter().map(|s| s.as_str()).collect::<Vec<_>>());
 
     if !resolved_packages.is_empty() {
-        clean_world_file_pins(&resolved_packages);
+        strip_world_file_pins(&resolved_packages);
+    }
+    if !transitive_names.is_empty() {
+        remove_world_file_entries(&transitive_names);
     }
 }
 
@@ -166,29 +182,6 @@ fn get_repo_url() -> Option<String> {
         }
     }
     None
-}
-
-fn clean_world_file_pins(packages: &[String]) {
-    let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
-    let content = match fs::read_to_string(&world_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let new_content: String = content
-        .lines()
-        .map(|line| {
-            for pkg in packages {
-                if line.starts_with(&format!("{pkg}=")) {
-                    return pkg.clone();
-                }
-            }
-            line.to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let _ = fs::write(&world_path, new_content + "\n");
 }
 
 fn find_packages_to_replace(apk: &Apk, cached_packages: &[Package]) -> Vec<String> {
