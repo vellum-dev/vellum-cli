@@ -85,7 +85,9 @@ pub fn handle_upgrade(
         let pkg_version = format!("remarkable-os={os_cur}-r0");
         if let Err(e) = apk.run(&["add", &pkg_version]) {
             let action = if is_downgrade { "downgrade" } else { "upgrade" };
-            eprintln!("warning: failed to {action} remarkable-os package: {e}");
+            eprintln!("error: failed to {action} remarkable-os package: {e}");
+            eprintln!("Run 'vellum upgrade' to retry.");
+            process::exit(1);
         }
     }
 
