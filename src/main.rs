@@ -20,7 +20,7 @@ use constants::VELLUM_ROOT;
 use device::{get_apk_arch, get_device_type, get_os_version};
 use repo::update_index;
 use state::State;
-use util::remove_glob;
+use util::{remove_glob, strip_world_file_pins};
 
 const VERSION: &str = env!("VELLUM_VERSION");
 
@@ -181,6 +181,43 @@ fn ensure_remarkable_os(state: &State, apk: &Apk) -> AppState {
             os_prev,
         }
     } else {
+        let installed_ver = apk.get_package_version("remarkable-os")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+
+        if installed_ver != os_cur {
+            eprintln!("warning: remarkable-os package ({installed_ver}) does not match OS ({os_cur}), recovering...");
+
+            if let Err(e) = fs::create_dir_all(&repo_dir) {
+                eprintln!("warning: failed to create repo directory: {e}");
+            }
+            remove_glob(&format!("{repo_dir}/remarkable-os-*.apk"));
+            if let Err(e) = generate_remarkable_os_package(&os_cur, &repo_dir, &key_path) {
+                eprintln!("warning: failed to generate remarkable-os package: {e}");
+            }
+            if let Err(e) = update_index(&repo_dir, Some(&key_path)) {
+                eprintln!("warning: failed to update local repo index: {e}");
+            }
+
+            strip_world_file_pins(&["remarkable-os".to_string()]);
+
+            let pkg_version = format!("remarkable-os={os_cur}-r0");
+            if let Err(e) = apk.run_silent(&["add", &pkg_version]) {
+                eprintln!("warning: failed to install remarkable-os package: {e}");
+            }
+
+            match apk.get_package_version("remarkable-os") {
+                Ok(Some(v)) if v == os_cur => {}
+                Ok(Some(v)) => {
+                    eprintln!("warning: remarkable-os package is at {v}, expected {os_cur}");
+                }
+                _ => {
+                    eprintln!("warning: could not verify remarkable-os version after recovery");
+                }
+            }
+        }
+
         AppState {
             os_mismatch: false,
             os_cur,
