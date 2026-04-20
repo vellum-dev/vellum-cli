@@ -6,7 +6,7 @@ An opinionated wrapper for Vellum's fork of Alpine's apk-tools that has been ada
 
 ```sh
 wget --no-check-certificate -O bootstrap.sh https://github.com/vellum-dev/vellum-cli/releases/latest/download/bootstrap.sh
-echo "bbb1e705171bc836e13dbdf2b53458773b45e81dac3fa0635ae80f6b7deb1dd9  bootstrap.sh" | sha256sum -c && bash bootstrap.sh
+echo "2fa58234487e2b81e4ef06b43d7bed47bd310863db338616815ca799a84d6279  bootstrap.sh" | sha256sum -c && bash bootstrap.sh
 ```
 
 ## Usage
