@@ -78,6 +78,18 @@ impl Apk {
             .env("APK_CONFIG", self.root.join("etc").join("apk").join("config"))
             .output()?;
 
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "apk exited with code {}",
+                    output.status.code().unwrap_or(-1)
+                ));
+            }
+            return Err(anyhow::anyhow!("{}", stderr));
+        }
+
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 

@@ -169,6 +169,7 @@ pub fn handle_upgrade(
     }
 
     if simulate {
+        print!("{output}");
         return;
     }
 
