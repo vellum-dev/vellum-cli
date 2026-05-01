@@ -80,15 +80,203 @@ pub fn handle_upgrade(
             eprintln!("warning: failed to update local repo index: {e}");
         }
 
-        clean_world_file_pins(apk);
+        let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
+        let original_world = fs::read_to_string(&world_path).unwrap_or_default();
 
-        let pkg_version = format!("remarkable-os={os_cur}-r0");
-        if let Err(e) = apk.run(&["add", &pkg_version]) {
-            let action = if is_downgrade { "downgrade" } else { "upgrade" };
-            eprintln!("error: failed to {action} remarkable-os package: {e}");
-            eprintln!("Run 'vellum upgrade' to retry.");
+        clean_world_file_pins(apk);
+        pin_world_file_entry(&world_path, "remarkable-os", &format!("{os_cur}-r0"));
+
+        let installed = apk.list_installed().unwrap_or_default();
+        let os_pins = pin_upgrade_packages(&installed, os_cur, index.as_deref());
+        for pin in os_pins.direct.iter().chain(&os_pins.transitive) {
+            let name = pin.split('=').next().unwrap_or(pin);
+            let version = pin.split('=').nth(1).unwrap_or("");
+            if !version.is_empty() {
+                pin_world_file_entry(&world_path, name, version);
+            }
+        }
+
+        match find_replacement_packages(apk, os_cur, index.as_deref()) {
+            ReplacementResult::Conflict(conflicts) => {
+                let _ = fs::write(&world_path, &original_world);
+                eprintln!("Multiple packages want to replace the same installed package:");
+                for (old_pkg, candidates) in &conflicts {
+                    eprintln!("  {old_pkg} can be replaced by: {}", candidates.join(", "));
+                }
+                eprintln!();
+                eprintln!("Please choose and install one manually:");
+                for (_, candidates) in &conflicts {
+                    for candidate in candidates {
+                        eprintln!("  vellum add {candidate}");
+                    }
+                }
+                process::exit(1);
+            }
+            ReplacementResult::Ok(replacements) if !replacements.is_empty() => {
+                println!("Package replacements available:");
+                for (new_pkg, old_pkg) in &replacements {
+                    println!("  {old_pkg} -> {new_pkg}");
+                }
+                println!();
+
+                for (new_pkg, _) in &replacements {
+                    remaining_args.push(new_pkg.clone());
+                }
+            }
+            ReplacementResult::Ok(_) => {}
+        }
+
+        let mut sim_args = vec!["upgrade", "--simulate"];
+        if is_downgrade {
+            sim_args.push("--available");
+        }
+        sim_args.extend(remaining_args.iter().map(|s| s.as_str()));
+
+        let result = apk.output(&sim_args);
+
+        if simulate {
+            let _ = fs::write(&world_path, &original_world);
+
+            match result {
+                Ok(output) => {
+                    print!("{output}");
+                }
+                Err(e) => {
+                    eprintln!("Failed to simulate upgrade: {e}");
+                    process::exit(1);
+                }
+            }
+            return;
+        }
+
+        let output = match result {
+            Ok(o) => o,
+            Err(e) => {
+                let _ = fs::write(&world_path, &original_world);
+                eprintln!("Failed to check for upgrades: {e}");
+                process::exit(1);
+            }
+        };
+
+        let mut packages = Vec::new();
+        for line in output.lines() {
+            for action_str in ["Upgrading ", "Installing ", "Downgrading "] {
+                if line.contains(action_str) {
+                    if let Some(rest) = line.split(action_str).nth(1) {
+                        if let Some(pkg_name) = rest.split(" (").next() {
+                            let pkg_name = pkg_name.trim();
+                            if !pkg_name.is_empty() && !packages.contains(&pkg_name.to_string()) {
+                                packages.push(pkg_name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let packages_to_replace = find_packages_to_replace(apk, &packages, os_cur, index.as_deref());
+
+        if packages.is_empty() && packages_to_replace.is_empty() {
+            let _ = fs::write(&world_path, &original_world);
+            match apk.get_package_version("remarkable-os") {
+                Ok(Some(installed_ver)) if installed_ver == os_cur => {
+                    if let Err(e) = state.set_os_version(os_cur) {
+                        eprintln!("warning: failed to save OS version: {e}");
+                    }
+                    println!("OS version synced to {os_cur}");
+                }
+                _ => {}
+            }
+            println!("No packages to upgrade.");
+            return;
+        }
+
+        if !upgrade_yes {
+            println!("The following {} package(s) will be upgraded:", packages.len());
+            for pkg in &packages {
+                println!("  - {pkg}");
+            }
+            if !packages_to_replace.is_empty() {
+                println!("\nThe following {} package(s) will be removed (replaced):", packages_to_replace.len());
+                for pkg in &packages_to_replace {
+                    println!("  - {pkg}");
+                }
+            }
+            print!("\nProceed with upgrade? [Y/n] ");
+            let _ = io::stdout().flush();
+
+            let stdin = io::stdin();
+            let mut line = String::new();
+            let _ = stdin.lock().read_line(&mut line);
+            let confirm = line.trim().to_lowercase();
+
+            if confirm == "n" || confirm == "no" {
+                let _ = fs::write(&world_path, &original_world);
+                println!("Upgrade aborted.");
+                process::exit(1);
+            }
+        }
+
+        if !packages_to_replace.is_empty() {
+            println!("Removing replaced packages...");
+            let del_args: Vec<&str> = packages_to_replace.iter().map(|s| s.as_str()).collect();
+            let mut del_cmd = vec!["del"];
+            del_cmd.extend(del_args);
+            if let Err(e) = apk.run(&del_cmd) {
+                eprintln!("warning: failed to remove replaced packages: {e}");
+            }
+        }
+
+        let mut upgrade_args = vec!["upgrade"];
+        if is_downgrade {
+            upgrade_args.push("--available");
+        }
+        upgrade_args.extend(remaining_args.iter().map(|s| s.as_str()));
+
+        if let Err(e) = apk.run(&upgrade_args) {
+            eprintln!("upgrade error: {e}");
             process::exit(1);
         }
+
+        match apk.get_package_version("remarkable-os") {
+            Ok(Some(installed_ver)) if installed_ver == os_cur => {
+                if let Err(e) = state.set_os_version(os_cur) {
+                    eprintln!("warning: failed to save OS version: {e}");
+                }
+                println!("OS version synced to {os_cur}");
+            }
+            Ok(Some(installed_ver)) => {
+                eprintln!("error: remarkable-os package is at {installed_ver}, expected {os_cur}");
+                eprintln!("OS version sync failed. Run 'vellum upgrade' to retry.");
+                process::exit(1);
+            }
+            Ok(None) => {
+                eprintln!("error: remarkable-os package not found after upgrade");
+                process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("warning: could not verify remarkable-os version: {e}");
+            }
+        }
+
+        let pinned_names: Vec<String> = os_pins.direct
+            .iter()
+            .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
+            .collect();
+        if !pinned_names.is_empty() {
+            strip_world_file_pins(&pinned_names);
+        }
+        let transitive_names: Vec<String> = os_pins.transitive
+            .iter()
+            .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
+            .collect();
+        if !transitive_names.is_empty() {
+            remove_world_file_entries(&transitive_names);
+        }
+
+        strip_world_file_pins(&["remarkable-os".to_string()]);
+
+        return;
     }
 
     match find_replacement_packages(apk, os_cur, index.as_deref()) {
@@ -121,9 +309,6 @@ pub fn handle_upgrade(
     }
 
     let mut simulate_args = vec!["upgrade", "--simulate"];
-    if is_downgrade {
-        simulate_args.push("--available");
-    }
     simulate_args.extend(remaining_args.iter().map(|s| s.as_str()));
 
     let output = match apk.output(&simulate_args) {
@@ -153,17 +338,6 @@ pub fn handle_upgrade(
     let packages_to_replace = find_packages_to_replace(apk, &packages, os_cur, index.as_deref());
 
     if packages.is_empty() && packages_to_replace.is_empty() {
-        if os_mismatch && !simulate {
-            match apk.get_package_version("remarkable-os") {
-                Ok(Some(installed_ver)) if installed_ver == os_cur => {
-                    if let Err(e) = state.set_os_version(os_cur) {
-                        eprintln!("warning: failed to save OS version: {e}");
-                    }
-                    println!("OS version synced to {os_cur}");
-                }
-                _ => {}
-            }
-        }
         println!("No packages to upgrade.");
         return;
     }
@@ -220,57 +394,11 @@ pub fn handle_upgrade(
     }
 
     let mut upgrade_args = vec!["upgrade"];
-    if is_downgrade {
-        upgrade_args.push("--available");
-    }
     upgrade_args.extend(remaining_args.iter().map(|s| s.as_str()));
 
-    if os_mismatch {
-        if let Err(e) = apk.run(&upgrade_args) {
-            eprintln!("upgrade error: {e}");
-            process::exit(1);
-        }
-
-        match apk.get_package_version("remarkable-os") {
-            Ok(Some(installed_ver)) if installed_ver == os_cur => {
-                if let Err(e) = state.set_os_version(os_cur) {
-                    eprintln!("warning: failed to save OS version: {e}");
-                }
-                println!("OS version synced to {os_cur}");
-            }
-            Ok(Some(installed_ver)) => {
-                eprintln!("error: remarkable-os package is at {installed_ver}, expected {os_cur}");
-                eprintln!("OS version sync failed. Run 'vellum upgrade' to retry.");
-                process::exit(1);
-            }
-            Ok(None) => {
-                eprintln!("error: remarkable-os package not found after upgrade");
-                process::exit(1);
-            }
-            Err(e) => {
-                eprintln!("warning: could not verify remarkable-os version: {e}");
-            }
-        }
-    } else {
-        if let Err(e) = apk.exec(&upgrade_args) {
-            eprintln!("exec error: {e}");
-            process::exit(1);
-        }
-    }
-
-    if !pin_result.direct.is_empty() {
-        let pkg_names: Vec<String> = pin_result.direct
-            .iter()
-            .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
-            .collect();
-        strip_world_file_pins(&pkg_names);
-    }
-    if !pin_result.transitive.is_empty() {
-        let pkg_names: Vec<String> = pin_result.transitive
-            .iter()
-            .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
-            .collect();
-        remove_world_file_entries(&pkg_names);
+    if let Err(e) = apk.exec(&upgrade_args) {
+        eprintln!("exec error: {e}");
+        process::exit(1);
     }
 }
 
@@ -435,6 +563,35 @@ fn clean_world_file_pins(apk: &Apk) {
         .join("\n");
 
     let _ = fs::write(&world_path, new_content + "\n");
+}
+
+fn pin_world_file_entry(world_path: &str, pkg: &str, version: &str) {
+    let content = fs::read_to_string(world_path).unwrap_or_default();
+    let pinned = format!("{pkg}={version}");
+    let mut found = false;
+
+    let new_content: String = content
+        .lines()
+        .map(|line| {
+            if line == pkg || line.starts_with(&format!("{pkg}=")) {
+                found = true;
+                pinned.clone()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let final_content = if found {
+        new_content + "\n"
+    } else if new_content.is_empty() {
+        format!("{pinned}\n")
+    } else {
+        format!("{new_content}\n{pinned}\n")
+    };
+
+    let _ = fs::write(world_path, final_content);
 }
 
 fn find_packages_to_replace(apk: &Apk, upgrading_packages: &[String], os_version: &str, index: Option<&[Package]>) -> Vec<String> {
