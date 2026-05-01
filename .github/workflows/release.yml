@@ -64,7 +64,7 @@ jobs:
           sha256sum vellum-linux-arm64 vellum-linux-armv7 > checksums.txt
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             binaries/vellum-linux-arm64
