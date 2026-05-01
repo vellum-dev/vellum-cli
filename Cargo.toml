@@ -13,7 +13,7 @@ sha2 = "0.10"
 pkcs8 = "0.10"
 pkcs1 = "0.7"
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 
 [profile.release]
 opt-level = "z"
