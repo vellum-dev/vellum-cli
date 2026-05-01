@@ -1,0 +1,18 @@
+  version: 2
+  updates:
+    - package-ecosystem: "cargo"
+      directory: "/"
+      schedule:
+        interval: "weekly"
+      groups:
+        rustls:
+          patterns:
+            - "rustls*"
+        tar:
+          patterns:
+            - "tar"
+            - "tar-*"
+    - package-ecosystem: "github-actions"
+      directory: "/"
+      schedule:
+        interval: "weekly"
