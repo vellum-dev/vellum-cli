@@ -244,7 +244,7 @@ fn ensure_device_package(state: &State, apk: &Apk) {
         if let Err(e) = fs::create_dir_all(&repo_dir) {
             eprintln!("warning: failed to create repo directory: {e}");
         }
-        for d in &["rm1", "rm2", "rmpp", "rmppm", "rmppmove"] {
+        for d in &["rm1", "rm2", "rmpp", "rmppm", "rmppmove", "rmppure"] {
             remove_glob(&format!("{repo_dir}/{d}-*.apk"));
         }
         if let Err(e) = generate_device_package(&device_type, &repo_dir, &key_path) {

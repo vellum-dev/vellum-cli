@@ -37,6 +37,7 @@ pub fn generate_device_package(device: &str, repo_dir: &str, key_path: &str) -> 
     let desc = match device {
         "rmpp" => "reMarkable Paper Pro",
         "rmppmove" => "reMarkable Paper Pro Move",
+        "rmppure" => "reMarkable Paper Pure",
         "rm2" => "reMarkable 2",
         "rm1" => "reMarkable 1",
         _ => "reMarkable Device",
