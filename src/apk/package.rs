@@ -36,11 +36,13 @@ pub fn generate_device_package(device: &str, repo_dir: &str, key_path: &str) -> 
 
     let desc = match device {
         "rmpp" => "reMarkable Paper Pro",
-        "rmppm" => "reMarkable Paper Pro Move",
+        "rmppmove" => "reMarkable Paper Pro Move",
         "rm2" => "reMarkable 2",
         "rm1" => "reMarkable 1",
         _ => "reMarkable Device",
     };
+
+    let provides = if device == "rmppmove" { "provides = rmppm\n" } else { "" };
 
     let pkginfo = format!(
         r#"pkgname = {device}
@@ -49,7 +51,7 @@ pkgdesc = Virtual package for {desc}
 url = https://github.com/vellum-dev/vellum-cli
 arch = noarch
 license = MIT
-"#
+{provides}"#
     );
 
     let filename = format!("{device}-1.0.0-r0.apk");
