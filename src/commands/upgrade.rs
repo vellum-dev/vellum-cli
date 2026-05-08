@@ -279,8 +279,25 @@ pub fn handle_upgrade(
         return;
     }
 
+    let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
+    let original_world = fs::read_to_string(&world_path).unwrap_or_default();
+
+    clean_world_file_pins(apk);
+    pin_world_file_entry(&world_path, "remarkable-os", &format!("{os_cur}-r0"));
+
+    let installed = apk.list_installed().unwrap_or_default();
+    let os_pins = pin_upgrade_packages(&installed, os_cur, index.as_deref());
+    for pin in os_pins.direct.iter().chain(&os_pins.transitive) {
+        let name = pin.split('=').next().unwrap_or(pin);
+        let version = pin.split('=').nth(1).unwrap_or("");
+        if !version.is_empty() {
+            pin_world_file_entry(&world_path, name, version);
+        }
+    }
+
     match find_replacement_packages(apk, os_cur, index.as_deref()) {
         ReplacementResult::Conflict(conflicts) => {
+            let _ = fs::write(&world_path, &original_world);
             eprintln!("Multiple packages want to replace the same installed package:");
             for (old_pkg, candidates) in &conflicts {
                 eprintln!("  {old_pkg} can be replaced by: {}", candidates.join(", "));
@@ -314,6 +331,7 @@ pub fn handle_upgrade(
     let output = match apk.output(&simulate_args) {
         Ok(o) => o,
         Err(e) => {
+            let _ = fs::write(&world_path, &original_world);
             eprintln!("Failed to check for upgrades: {e}");
             process::exit(1);
         }
@@ -338,11 +356,13 @@ pub fn handle_upgrade(
     let packages_to_replace = find_packages_to_replace(apk, &packages, os_cur, index.as_deref());
 
     if packages.is_empty() && packages_to_replace.is_empty() {
+        let _ = fs::write(&world_path, &original_world);
         println!("No packages to upgrade.");
         return;
     }
 
     if simulate {
+        let _ = fs::write(&world_path, &original_world);
         print!("{output}");
         return;
     }
@@ -367,6 +387,7 @@ pub fn handle_upgrade(
         let confirm = line.trim().to_lowercase();
 
         if confirm == "n" || confirm == "no" {
+            let _ = fs::write(&world_path, &original_world);
             println!("Upgrade aborted.");
             process::exit(1);
         }
@@ -382,24 +403,30 @@ pub fn handle_upgrade(
         }
     }
 
-    let pin_result = pin_upgrade_packages(&packages, os_cur, index.as_deref());
-    let all_pins: Vec<&str> = pin_result.direct.iter().chain(&pin_result.transitive).map(|s| s.as_str()).collect();
-
-    if !all_pins.is_empty() {
-        let mut add_args: Vec<&str> = vec!["add"];
-        add_args.extend(&all_pins);
-        if let Err(e) = apk.run(&add_args) {
-            eprintln!("warning: failed to pin OS-compatible versions: {e}");
-        }
-    }
-
     let mut upgrade_args = vec!["upgrade"];
     upgrade_args.extend(remaining_args.iter().map(|s| s.as_str()));
 
-    if let Err(e) = apk.exec(&upgrade_args) {
-        eprintln!("exec error: {e}");
+    if let Err(e) = apk.run(&upgrade_args) {
+        eprintln!("upgrade error: {e}");
         process::exit(1);
     }
+
+    let pinned_names: Vec<String> = os_pins.direct
+        .iter()
+        .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
+        .collect();
+    if !pinned_names.is_empty() {
+        strip_world_file_pins(&pinned_names);
+    }
+    let transitive_names: Vec<String> = os_pins.transitive
+        .iter()
+        .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
+        .collect();
+    if !transitive_names.is_empty() {
+        remove_world_file_entries(&transitive_names);
+    }
+
+    strip_world_file_pins(&["remarkable-os".to_string()]);
 }
 
 struct PinResult {
