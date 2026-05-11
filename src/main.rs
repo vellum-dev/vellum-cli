@@ -238,10 +238,13 @@ fn ensure_device_package(state: &State, apk: &Apk) {
     let pkg_path = format!("{repo_dir}/{device_type}-1.0.0-r0.apk");
 
     if device_type != prev_device || !Path::new(&pkg_path).exists() {
+        if !prev_device.is_empty() && device_type != prev_device {
+            let _ = apk.run_silent(&["del", &prev_device]);
+        }
         if let Err(e) = fs::create_dir_all(&repo_dir) {
             eprintln!("warning: failed to create repo directory: {e}");
         }
-        for d in &["rm1", "rm2", "rmpp", "rmppm"] {
+        for d in &["rm1", "rm2", "rmpp", "rmppm", "rmppmove", "rmppure"] {
             remove_glob(&format!("{repo_dir}/{d}-*.apk"));
         }
         if let Err(e) = generate_device_package(&device_type, &repo_dir, &key_path) {

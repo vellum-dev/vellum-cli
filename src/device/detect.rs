@@ -47,7 +47,8 @@ pub fn get_apk_arch() -> String {
 
 const DEVICE_PATTERNS: &[(&str, &str)] = &[
     ("Ferrari", "rmpp"),
-    ("Chiappa", "rmppm"),
+    ("Chiappa", "rmppmove"),
+    ("Tatsu", "rmppure"),
     ("reMarkable 1.0", "rm1"),
     ("reMarkable 2.0", "rm2"),
 ];
