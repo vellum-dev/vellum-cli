@@ -19,24 +19,22 @@ impl Apk {
         self.root.join("bin").join("apk.vellum")
     }
 
-    fn base_args(&self) -> Vec<String> {
-        vec![
-            "--root".to_string(),
-            self.root.to_string_lossy().to_string(),
-            "--install-root".to_string(),
-            "/".to_string(),
-            "--no-logfile".to_string(),
-        ]
+    fn cmd(&self, args: &[&str]) -> Command {
+        let mut cmd = Command::new(self.bin_path());
+        cmd.args([
+            "--root",
+            &self.root.to_string_lossy(),
+            "--install-root",
+            "/",
+            "--no-logfile",
+        ]);
+        cmd.args(args);
+        cmd.env("APK_CONFIG", self.root.join("etc").join("apk").join("config"));
+        cmd
     }
 
     pub fn run(&self, args: &[&str]) -> Result<()> {
-        let mut cmd_args = self.base_args();
-        cmd_args.extend(args.iter().map(|s| s.to_string()));
-
-        let status = Command::new(self.bin_path())
-            .args(&cmd_args)
-            .env("APK_CONFIG", self.root.join("etc").join("apk").join("config"))
-            .status()?;
+        let status = self.cmd(args).status()?;
 
         if status.success() {
             Ok(())
@@ -49,12 +47,8 @@ impl Apk {
     }
 
     pub fn run_silent(&self, args: &[&str]) -> Result<()> {
-        let mut cmd_args = self.base_args();
-        cmd_args.extend(args.iter().map(|s| s.to_string()));
-
-        let status = Command::new(self.bin_path())
-            .args(&cmd_args)
-            .env("APK_CONFIG", self.root.join("etc").join("apk").join("config"))
+        let status = self
+            .cmd(args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()?;
@@ -70,13 +64,7 @@ impl Apk {
     }
 
     pub fn output(&self, args: &[&str]) -> Result<String> {
-        let mut cmd_args = self.base_args();
-        cmd_args.extend(args.iter().map(|s| s.to_string()));
-
-        let output = Command::new(self.bin_path())
-            .args(&cmd_args)
-            .env("APK_CONFIG", self.root.join("etc").join("apk").join("config"))
-            .output()?;
+        let output = self.cmd(args).output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -94,13 +82,7 @@ impl Apk {
     }
 
     pub fn exec(&self, args: &[&str]) -> Result<()> {
-        let mut cmd_args = self.base_args();
-        cmd_args.extend(args.iter().map(|s| s.to_string()));
-
-        let err = Command::new(self.bin_path())
-            .args(&cmd_args)
-            .env("APK_CONFIG", self.root.join("etc").join("apk").join("config"))
-            .exec();
+        let err = self.cmd(args).exec();
 
         Err(anyhow::anyhow!("exec failed: {err}"))
     }

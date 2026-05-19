@@ -8,8 +8,9 @@ mod util;
 
 use std::env;
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process;
+use std::process::{self, Command, Stdio};
 
 use apk::{generate_device_package, generate_remarkable_os_package, version_lt, Apk};
 use commands::{
@@ -30,7 +31,40 @@ struct AppState {
     os_prev: String,
 }
 
+fn inhibit_sleep() {
+    if env::var_os("VELLUM_INHIBIT").is_some() {
+        return;
+    }
+
+    let has_inhibit = Command::new("systemd-inhibit")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok();
+
+    if !has_inhibit {
+        return;
+    }
+
+    let args: Vec<String> = env::args().collect();
+    let err = Command::new("systemd-inhibit")
+        .args([
+            "--what=sleep:handle-suspend-key",
+            "--who=vellum",
+            "--why=Package operation in progress",
+            "--",
+        ])
+        .args(&args)
+        .env("VELLUM_INHIBIT", "1")
+        .exec();
+
+    eprintln!("warning: failed to inhibit sleep: {err}");
+}
+
 fn main() {
+    inhibit_sleep();
+
     unsafe { env::set_var("HTTP_USER_AGENT", format!("vellum-cli/{VERSION}")); }
 
     let state = State::new(VELLUM_ROOT);
