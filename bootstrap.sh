@@ -163,11 +163,17 @@ LOCAL_KEY="$VELLUM_ROOT/etc/apk/keys/local.rsa"
     rm -f APKINDEX unsigned.tar.gz sig.tar sig.tar.gz .SIGN.RSA.local.rsa.pub
 )
 
+APK_NETWORK_FLAG=""
+if [ -n "$OFFLINE_DIR" ]; then
+    APK_NETWORK_FLAG="--no-network"
+fi
+
 echo "Initializing apk database..."
 "$VELLUM_ROOT/bin/apk.vellum" \
     --root "$VELLUM_ROOT" \
     --install-root / \
     --no-logfile \
+    $APK_NETWORK_FLAG \
     add --initdb
 
 echo "Registering vellum package..."
@@ -175,6 +181,7 @@ echo "Registering vellum package..."
     --root "$VELLUM_ROOT" \
     --install-root / \
     --no-logfile \
+    $APK_NETWORK_FLAG \
     add vellum 2>/dev/null || true
 
 if [ -n "$OFFLINE_DIR" ]; then
