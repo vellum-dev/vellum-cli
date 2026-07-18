@@ -122,6 +122,7 @@ fn ensure_remarkable_os(state: &State, apk: &Apk) -> AppState {
     let os_cur = match get_os_version() {
         Ok(v) => v,
         Err(_) => {
+            eprintln!("warning: could not detect reMarkable OS version; package installs may fail");
             return AppState {
                 os_mismatch: false,
                 os_cur: String::new(),
