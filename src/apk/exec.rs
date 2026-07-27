@@ -69,13 +69,18 @@ impl Apk {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.trim();
-            if stderr.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "apk exited with code {}",
-                    output.status.code().unwrap_or(-1)
-                ));
+            if !stderr.is_empty() {
+                return Err(anyhow::anyhow!("{}", stderr));
             }
-            return Err(anyhow::anyhow!("{}", stderr));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stdout = stdout.trim();
+            if !stdout.is_empty() {
+                return Err(anyhow::anyhow!("{}", stdout));
+            }
+            return Err(anyhow::anyhow!(
+                "apk exited with code {}",
+                output.status.code().unwrap_or(-1)
+            ));
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
