@@ -44,6 +44,28 @@ pub fn strip_world_file_pins(packages: &[String]) {
     let _ = fs::write(&world_path, new_content + "\n");
 }
 
+pub fn world_file_members(world_content: &str) -> Vec<String> {
+    world_content
+        .lines()
+        .map(|line| line.split('=').next().unwrap_or(line).trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+pub fn restore_world_file_entries(pinned: &[String], previous_members: &[String]) {
+    let (was_member, was_not_member): (Vec<String>, Vec<String>) = pinned
+        .iter()
+        .cloned()
+        .partition(|name| previous_members.iter().any(|m| m == name));
+
+    if !was_member.is_empty() {
+        strip_world_file_pins(&was_member);
+    }
+    if !was_not_member.is_empty() {
+        remove_world_file_entries(&was_not_member);
+    }
+}
+
 pub fn remove_world_file_entries(packages: &[String]) {
     let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
     let content = match fs::read_to_string(&world_path) {
@@ -75,6 +97,17 @@ pub fn matches_glob(name: &str, pattern: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn world_file_members_strips_pins() {
+        let members = world_file_members("foo\nbar=1.2.3-r0\n\nbaz=2.0\n");
+        assert_eq!(members, vec!["foo", "bar", "baz"]);
+    }
+
+    #[test]
+    fn world_file_members_empty() {
+        assert!(world_file_members("").is_empty());
+    }
 
     #[test]
     fn matches_glob_exact_match() {

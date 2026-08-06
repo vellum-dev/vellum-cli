@@ -11,7 +11,7 @@ use crate::constants::{VELLUM_ROOT, VIRTUAL_PKGS};
 use crate::device::get_apk_arch;
 use crate::repo::update_index;
 use crate::state::State;
-use crate::util::{remove_glob, remove_world_file_entries, strip_world_file_pins};
+use crate::util::{remove_glob, restore_world_file_entries, strip_world_file_pins, world_file_members};
 
 pub fn handle_upgrade(
     state: &State,
@@ -82,6 +82,8 @@ pub fn handle_upgrade(
 
         let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
         let original_world = fs::read_to_string(&world_path).unwrap_or_default();
+
+        let world_members_before_pinning = world_file_members(&original_world);
 
         clean_world_file_pins(apk);
         pin_world_file_entry(&world_path, "remarkable-os", &format!("{os_cur}-r0"));
@@ -261,18 +263,10 @@ pub fn handle_upgrade(
 
         let pinned_names: Vec<String> = os_pins.direct
             .iter()
+            .chain(&os_pins.transitive)
             .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
             .collect();
-        if !pinned_names.is_empty() {
-            strip_world_file_pins(&pinned_names);
-        }
-        let transitive_names: Vec<String> = os_pins.transitive
-            .iter()
-            .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
-            .collect();
-        if !transitive_names.is_empty() {
-            remove_world_file_entries(&transitive_names);
-        }
+        restore_world_file_entries(&pinned_names, &world_members_before_pinning);
 
         strip_world_file_pins(&["remarkable-os".to_string()]);
 
@@ -281,6 +275,7 @@ pub fn handle_upgrade(
 
     let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
     let original_world = fs::read_to_string(&world_path).unwrap_or_default();
+    let world_members_before_pinning = world_file_members(&original_world);
 
     clean_world_file_pins(apk);
     pin_world_file_entry(&world_path, "remarkable-os", &format!("{os_cur}-r0"));
@@ -413,18 +408,10 @@ pub fn handle_upgrade(
 
     let pinned_names: Vec<String> = os_pins.direct
         .iter()
+        .chain(&os_pins.transitive)
         .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
         .collect();
-    if !pinned_names.is_empty() {
-        strip_world_file_pins(&pinned_names);
-    }
-    let transitive_names: Vec<String> = os_pins.transitive
-        .iter()
-        .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
-        .collect();
-    if !transitive_names.is_empty() {
-        remove_world_file_entries(&transitive_names);
-    }
+    restore_world_file_entries(&pinned_names, &world_members_before_pinning);
 
     strip_world_file_pins(&["remarkable-os".to_string()]);
 }

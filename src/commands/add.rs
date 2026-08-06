@@ -7,7 +7,7 @@ use crate::apk::{
 };
 use crate::constants::VELLUM_ROOT;
 use crate::device::get_apk_arch;
-use crate::util::{remove_world_file_entries, strip_world_file_pins};
+use crate::util::{restore_world_file_entries, strip_world_file_pins, world_file_members};
 
 pub fn handle_add(apk: &Apk, args: &[String]) {
     let os_version = match apk.get_package_version("remarkable-os") {
@@ -104,13 +104,17 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
         }
     }
 
+    let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
+    let members_before_add =
+        world_file_members(&fs::read_to_string(&world_path).unwrap_or_default());
+
     run_apk_add(apk, &resolved_args.iter().map(|s| s.as_str()).collect::<Vec<_>>());
 
     if !resolved_packages.is_empty() {
         strip_world_file_pins(&resolved_packages);
     }
     if !transitive_names.is_empty() {
-        remove_world_file_entries(&transitive_names);
+        restore_world_file_entries(&transitive_names, &members_before_add);
     }
 }
 
