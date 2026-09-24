@@ -11,7 +11,10 @@ use crate::constants::{VELLUM_ROOT, VIRTUAL_PKGS};
 use crate::device::get_apk_arch;
 use crate::repo::update_index;
 use crate::state::State;
-use crate::util::{remove_glob, restore_world_file_entries, strip_world_file_pins, world_file_members};
+use crate::util::{
+    remove_glob, restore_world_file_lines, strip_world_file_pins, world_entry_name,
+    world_entry_without_constraint,
+};
 
 pub fn handle_upgrade(
     state: &State,
@@ -83,9 +86,8 @@ pub fn handle_upgrade(
         let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
         let original_world = fs::read_to_string(&world_path).unwrap_or_default();
 
-        let world_members_before_pinning = world_file_members(&original_world);
-
         clean_world_file_pins(apk);
+        let world_without_stale_pins = fs::read_to_string(&world_path).unwrap_or_default();
         pin_world_file_entry(&world_path, "remarkable-os", &format!("{os_cur}-r0"));
 
         let installed = apk.list_installed().unwrap_or_default();
@@ -160,21 +162,8 @@ pub fn handle_upgrade(
             }
         };
 
-        let mut packages = Vec::new();
-        for line in output.lines() {
-            for action_str in ["Upgrading ", "Installing ", "Downgrading "] {
-                if line.contains(action_str) {
-                    if let Some(rest) = line.split(action_str).nth(1) {
-                        if let Some(pkg_name) = rest.split(" (").next() {
-                            let pkg_name = pkg_name.trim();
-                            if !pkg_name.is_empty() && !packages.contains(&pkg_name.to_string()) {
-                                packages.push(pkg_name.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let planned_changes = planned_changes_from_simulation(&output);
+        let packages: Vec<String> = planned_changes.iter().map(|c| c.package.clone()).collect();
 
         let packages_to_replace = find_packages_to_replace(apk, &packages, os_cur, index.as_deref());
 
@@ -194,16 +183,7 @@ pub fn handle_upgrade(
         }
 
         if !upgrade_yes {
-            println!("The following {} package(s) will be upgraded:", packages.len());
-            for pkg in &packages {
-                println!("  - {pkg}");
-            }
-            if !packages_to_replace.is_empty() {
-                println!("\nThe following {} package(s) will be removed (replaced):", packages_to_replace.len());
-                for pkg in &packages_to_replace {
-                    println!("  - {pkg}");
-                }
-            }
+            print_planned_changes(&planned_changes, &packages_to_replace);
             print!("\nProceed with upgrade? [Y/n] ");
             let _ = io::stdout().flush();
 
@@ -266,7 +246,7 @@ pub fn handle_upgrade(
             .chain(&os_pins.transitive)
             .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
             .collect();
-        restore_world_file_entries(&pinned_names, &world_members_before_pinning);
+        restore_world_file_lines(&pinned_names, &world_without_stale_pins);
 
         strip_world_file_pins(&["remarkable-os".to_string()]);
 
@@ -275,9 +255,9 @@ pub fn handle_upgrade(
 
     let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
     let original_world = fs::read_to_string(&world_path).unwrap_or_default();
-    let world_members_before_pinning = world_file_members(&original_world);
 
     clean_world_file_pins(apk);
+    let world_without_stale_pins = fs::read_to_string(&world_path).unwrap_or_default();
     pin_world_file_entry(&world_path, "remarkable-os", &format!("{os_cur}-r0"));
 
     let installed = apk.list_installed().unwrap_or_default();
@@ -332,21 +312,8 @@ pub fn handle_upgrade(
         }
     };
 
-    let mut packages = Vec::new();
-    for line in output.lines() {
-        for action in ["Upgrading ", "Installing "] {
-            if line.contains(action) {
-                if let Some(rest) = line.split(action).nth(1) {
-                    if let Some(pkg_name) = rest.split(" (").next() {
-                        let pkg_name = pkg_name.trim();
-                        if !pkg_name.is_empty() && !packages.contains(&pkg_name.to_string()) {
-                            packages.push(pkg_name.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let planned_changes = planned_changes_from_simulation(&output);
+    let packages: Vec<String> = planned_changes.iter().map(|c| c.package.clone()).collect();
 
     let packages_to_replace = find_packages_to_replace(apk, &packages, os_cur, index.as_deref());
 
@@ -363,16 +330,7 @@ pub fn handle_upgrade(
     }
 
     if !upgrade_yes {
-        println!("The following {} package(s) will be upgraded:", packages.len());
-        for pkg in &packages {
-            println!("  - {pkg}");
-        }
-        if !packages_to_replace.is_empty() {
-            println!("\nThe following {} package(s) will be removed (replaced):", packages_to_replace.len());
-            for pkg in &packages_to_replace {
-                println!("  - {pkg}");
-            }
-        }
+        print_planned_changes(&planned_changes, &packages_to_replace);
         print!("\nProceed with upgrade? [Y/n] ");
         let _ = io::stdout().flush();
 
@@ -411,9 +369,74 @@ pub fn handle_upgrade(
         .chain(&os_pins.transitive)
         .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
         .collect();
-    restore_world_file_entries(&pinned_names, &world_members_before_pinning);
+    restore_world_file_lines(&pinned_names, &world_without_stale_pins);
 
     strip_world_file_pins(&["remarkable-os".to_string()]);
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ChangeAction {
+    Install,
+    Upgrade,
+    Downgrade,
+}
+
+struct PlannedChange {
+    action: ChangeAction,
+    package: String,
+}
+
+fn planned_changes_from_simulation(output: &str) -> Vec<PlannedChange> {
+    let mut changes: Vec<PlannedChange> = Vec::new();
+    for line in output.lines() {
+        for (marker, action) in [
+            ("Installing ", ChangeAction::Install),
+            ("Upgrading ", ChangeAction::Upgrade),
+            ("Downgrading ", ChangeAction::Downgrade),
+        ] {
+            if let Some(rest) = line.split(marker).nth(1) {
+                let package = world_entry_name(rest.split(" (").next().unwrap_or("").trim());
+                if !package.is_empty() && !changes.iter().any(|c| c.package == package) {
+                    changes.push(PlannedChange { action, package: package.to_string() });
+                }
+            }
+        }
+    }
+    changes
+}
+
+fn print_planned_changes(changes: &[PlannedChange], packages_to_replace: &[String]) {
+    let mut sections: Vec<(&str, Vec<&str>)> = [
+        (ChangeAction::Install, "installed"),
+        (ChangeAction::Upgrade, "upgraded"),
+        (ChangeAction::Downgrade, "downgraded"),
+    ]
+    .into_iter()
+    .map(|(action, verb)| {
+        let packages = changes
+            .iter()
+            .filter(|c| c.action == action)
+            .map(|c| c.package.as_str())
+            .collect();
+        (verb, packages)
+    })
+    .collect();
+    sections.push((
+        "removed (replaced)",
+        packages_to_replace.iter().map(|s| s.as_str()).collect(),
+    ));
+
+    let mut first_section = true;
+    for (verb, packages) in sections.iter().filter(|(_, packages)| !packages.is_empty()) {
+        if !first_section {
+            println!();
+        }
+        first_section = false;
+        println!("The following {} package(s) will be {verb}:", packages.len());
+        for pkg in packages {
+            println!("  - {pkg}");
+        }
+    }
 }
 
 struct PinResult {
@@ -557,55 +580,40 @@ fn clean_world_file_pins(apk: &Apk) {
 
     packages_to_unpin.push("remarkable-os".to_string());
 
-    let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
-    let content = match fs::read_to_string(&world_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let new_content: String = content
-        .lines()
-        .map(|line| {
-            for pkg in &packages_to_unpin {
-                if line.starts_with(&format!("{pkg}=")) {
-                    return pkg.clone();
-                }
-            }
-            line.to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let _ = fs::write(&world_path, new_content + "\n");
+    strip_world_file_pins(&packages_to_unpin);
 }
 
 fn pin_world_file_entry(world_path: &str, pkg: &str, version: &str) {
     let content = fs::read_to_string(world_path).unwrap_or_default();
-    let pinned = format!("{pkg}={version}");
-    let mut found = false;
+    let _ = fs::write(world_path, pin_in_world(&content, pkg, version) + "\n");
+}
 
-    let new_content: String = content
+fn pin_in_world(content: &str, pkg: &str, version: &str) -> String {
+    let name_with_tag = content
+        .lines()
+        .find(|line| world_entry_name(line) == pkg)
+        .map_or(pkg, world_entry_without_constraint);
+    let mut rewrote_existing_line = false;
+
+    let mut lines: Vec<String> = content
         .lines()
         .map(|line| {
-            if line == pkg || line.starts_with(&format!("{pkg}=")) {
-                found = true;
-                pinned.clone()
+            let unconstrained = world_entry_without_constraint(line);
+            let constraint = &line[unconstrained.len()..];
+            let is_bare_or_pinned = constraint.is_empty() || constraint.starts_with('=');
+            if world_entry_name(line) == pkg && is_bare_or_pinned {
+                rewrote_existing_line = true;
+                format!("{unconstrained}={version}")
             } else {
                 line.to_string()
             }
         })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect();
 
-    let final_content = if found {
-        new_content + "\n"
-    } else if new_content.is_empty() {
-        format!("{pinned}\n")
-    } else {
-        format!("{new_content}\n{pinned}\n")
-    };
-
-    let _ = fs::write(world_path, final_content);
+    if !rewrote_existing_line {
+        lines.push(format!("{name_with_tag}={version}"));
+    }
+    lines.join("\n")
 }
 
 fn find_packages_to_replace(apk: &Apk, upgrading_packages: &[String], os_version: &str, index: Option<&[Package]>) -> Vec<String> {
@@ -684,3 +692,42 @@ fn find_replacement_packages(apk: &Apk, os_version: &str, index: Option<&[Packag
     ReplacementResult::Ok(result)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pin_rewrites_bare_and_pinned_lines_keeping_tag() {
+        assert_eq!(pin_in_world("tun@testing\nfoo", "tun", "1.0.2-r0"), "tun@testing=1.0.2-r0\nfoo");
+        assert_eq!(pin_in_world("tun=1.0.1-r2", "tun", "1.0.2-r0"), "tun=1.0.2-r0");
+        assert_eq!(pin_in_world("", "tun", "1.0.2-r0"), "tun=1.0.2-r0");
+    }
+
+    #[test]
+    fn pin_appends_beside_other_constraints_keeping_tag() {
+        assert_eq!(pin_in_world("foo@testing<2", "foo", "1.5-r0"), "foo@testing<2\nfoo@testing=1.5-r0");
+        assert_eq!(pin_in_world("micro><Q1abc=", "micro", "2.0-r0"), "micro><Q1abc=\nmicro=2.0-r0");
+    }
+
+    #[test]
+    fn simulation_parse_includes_downgrades_and_strips_tags() {
+        let output = "(1/4) Installing appload (0.5.3-r3)\n\
+                      (2/4) Downgrading liboxide@oxide (3.2_git20260727-r77655 -> 3.1.2-r0)\n\
+                      (3/4) Upgrading tun (1.0.1-r2 -> 1.0.2-r0)\n\
+                      (4/4) Downgrading liboxide@oxide (3.2_git20260727-r77655 -> 3.1.2-r0)\n\
+                      OK: 18 B in 18 packages";
+        let planned_changes = planned_changes_from_simulation(output);
+        let changes: Vec<(ChangeAction, &str)> = planned_changes
+            .iter()
+            .map(|c| (c.action, c.package.as_str()))
+            .collect();
+        assert_eq!(
+            changes,
+            vec![
+                (ChangeAction::Install, "appload"),
+                (ChangeAction::Downgrade, "liboxide"),
+                (ChangeAction::Upgrade, "tun"),
+            ]
+        );
+    }
+}

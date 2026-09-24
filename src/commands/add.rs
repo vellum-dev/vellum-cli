@@ -7,7 +7,10 @@ use crate::apk::{
 };
 use crate::constants::VELLUM_ROOT;
 use crate::device::get_apk_arch;
-use crate::util::{restore_world_file_entries, strip_world_file_pins, world_file_members};
+use crate::util::{
+    restore_world_file_entries, strip_world_file_pins, world_entry_name,
+    world_entry_without_constraint, world_file_members,
+};
 
 pub fn handle_add(apk: &Apk, args: &[String]) {
     let os_version = match apk.get_package_version("remarkable-os") {
@@ -105,10 +108,21 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
     }
 
     let world_path = format!("{VELLUM_ROOT}/etc/apk/world");
-    let members_before_add =
-        world_file_members(&fs::read_to_string(&world_path).unwrap_or_default());
+    let world_before_add = fs::read_to_string(&world_path).unwrap_or_default();
+    let members_before_add = world_file_members(&world_before_add);
 
-    run_apk_add(apk, &resolved_args.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+    let add_args: Vec<String> = resolved_args
+        .iter()
+        .map(|arg| {
+            if transitive_names.iter().any(|name| name == world_entry_name(arg)) {
+                keep_world_tag_on_pin(arg, &world_before_add)
+            } else {
+                arg.clone()
+            }
+        })
+        .collect();
+
+    run_apk_add(apk, &add_args.iter().map(|s| s.as_str()).collect::<Vec<_>>());
 
     if !resolved_packages.is_empty() {
         strip_world_file_pins(&resolved_packages);
@@ -116,6 +130,15 @@ pub fn handle_add(apk: &Apk, args: &[String]) {
     if !transitive_names.is_empty() {
         restore_world_file_entries(&transitive_names, &members_before_add);
     }
+}
+
+fn keep_world_tag_on_pin(pin: &str, world_content: &str) -> String {
+    let name = world_entry_name(pin);
+    world_content
+        .lines()
+        .map(world_entry_without_constraint)
+        .find(|entry| world_entry_name(entry) == name && entry.contains('@'))
+        .map_or_else(|| pin.to_string(), |tagged| format!("{tagged}{}", &pin[name.len()..]))
 }
 
 fn run_add_directly(apk: &Apk, args: &[String]) {
@@ -282,5 +305,30 @@ fn run_command(path: &str) -> anyhow::Result<()> {
         Ok(())
     } else {
         Err(anyhow::anyhow!("command failed"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pin_keeps_tag_from_world() {
+        let world = "appload\nxovi-extensions@testing\ntun\ntun@testing\n";
+        assert_eq!(
+            keep_world_tag_on_pin("xovi-extensions=19.0.0-r4", world),
+            "xovi-extensions@testing=19.0.0-r4"
+        );
+        assert_eq!(keep_world_tag_on_pin("tun=1.0.2-r0", world), "tun@testing=1.0.2-r0");
+    }
+
+    #[test]
+    fn pin_without_tagged_world_entry_is_unchanged() {
+        let world = "appload\nxovi\nxovi-extensions-extra@testing\n";
+        assert_eq!(keep_world_tag_on_pin("xovi=0.3.3-r2", world), "xovi=0.3.3-r2");
+        assert_eq!(
+            keep_world_tag_on_pin("xovi-extensions=19.0.0-r4", world),
+            "xovi-extensions=19.0.0-r4"
+        );
     }
 }
