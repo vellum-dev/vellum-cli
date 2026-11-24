@@ -215,7 +215,9 @@ pub fn handle_upgrade(
         }
         upgrade_args.extend(remaining_args.iter().map(|s| s.as_str()));
 
-        if let Err(e) = apk.run(&upgrade_args) {
+        let upgrade_result = apk.run(&upgrade_args);
+        unpin_world_file(&os_pins, &world_without_stale_pins);
+        if let Err(e) = upgrade_result {
             eprintln!("upgrade error: {e}");
             process::exit(1);
         }
@@ -240,15 +242,6 @@ pub fn handle_upgrade(
                 eprintln!("warning: could not verify remarkable-os version: {e}");
             }
         }
-
-        let pinned_names: Vec<String> = os_pins.direct
-            .iter()
-            .chain(&os_pins.transitive)
-            .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
-            .collect();
-        restore_world_file_lines(&pinned_names, &world_without_stale_pins);
-
-        strip_world_file_pins(&["remarkable-os".to_string()]);
 
         return;
     }
@@ -359,17 +352,21 @@ pub fn handle_upgrade(
     let mut upgrade_args = vec!["upgrade"];
     upgrade_args.extend(remaining_args.iter().map(|s| s.as_str()));
 
-    if let Err(e) = apk.run(&upgrade_args) {
+    let upgrade_result = apk.run(&upgrade_args);
+    unpin_world_file(&os_pins, &world_without_stale_pins);
+    if let Err(e) = upgrade_result {
         eprintln!("upgrade error: {e}");
         process::exit(1);
     }
+}
 
+fn unpin_world_file(os_pins: &PinResult, world_without_stale_pins: &str) {
     let pinned_names: Vec<String> = os_pins.direct
         .iter()
         .chain(&os_pins.transitive)
         .filter_map(|s| s.split('=').next().map(|n| n.to_string()))
         .collect();
-    restore_world_file_lines(&pinned_names, &world_without_stale_pins);
+    restore_world_file_lines(&pinned_names, world_without_stale_pins);
 
     strip_world_file_pins(&["remarkable-os".to_string()]);
 }
